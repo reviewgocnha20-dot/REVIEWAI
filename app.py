@@ -68,47 +68,140 @@ BACKGROUND_IMAGE_B64 = "/9j/4AAQSkZJRgABAQAASABIAAD/4QCARXhpZgAATU0AKgAAAAgABQES
 st.markdown(
     f"""
     <style>
-    [data-testid=\"stAppViewContainer\"] {{
-        background-image: linear-gradient(rgba(20, 0, 0, .68), rgba(20, 0, 0, .72)),
+    /* Ảnh bản đồ vẫn làm nền, phủ tối nhẹ để nội dung nổi bật */
+    [data-testid="stAppViewContainer"] {{
+        background-image:
+          linear-gradient(rgba(12, 0, 0, .38), rgba(12, 0, 0, .46)),
           url(data:image/jpeg;base64,{BACKGROUND_IMAGE_B64});
         background-size: cover;
         background-position: center center;
         background-attachment: fixed;
     }}
-    [data-testid=\"stHeader\"] {{ background: rgba(0,0,0,0); }}
-    [data-testid=\"stSidebar\"] {{
-        background: rgba(55, 25, 0, .94);
-        border-right: 1px solid rgba(255,215,90,.55);
+    [data-testid="stHeader"] {{ background:rgba(0,0,0,.15) !important; }}
+    [data-testid="stSidebar"] {{
+        background:rgba(42, 17, 0, .99) !important;
+        border-right:2px solid #f2b82f !important;
     }}
     .block-container {{
-        padding-top: 1.2rem; padding-bottom: 2rem;
-        max-width: 900px;
+        padding-top:1rem !important;
+        padding-bottom:2rem !important;
+        max-width:900px;
     }}
+
+    /* Dòng chủ quyền: chữ ĐEN rõ nét trên nền vàng sáng */
     .vn-banner {{
-        text-align:center; font-weight:900; letter-spacing:1px;
-        color:#ffd45b; font-size:clamp(22px, 5vw, 42px);
-        text-shadow:0 3px 8px #000, 0 0 18px #a20d00;
-        padding:18px 10px; margin:8px 0 20px 0;
-        border:1px solid rgba(255,210,80,.7);
-        border-radius:18px; background:rgba(45,0,0,.55);
+        display:block !important;
+        box-sizing:border-box !important;
+        width:100% !important;
+        text-align:center !important;
+        font-weight:900 !important;
+        letter-spacing:.2px !important;
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        font-size:clamp(21px, 5.4vw, 38px) !important;
+        line-height:1.35 !important;
+        text-shadow:none !important;
+        padding:18px 10px !important;
+        margin:10px 0 22px 0 !important;
+        border:2px solid #5b3300 !important;
+        border-radius:14px !important;
+        background:#ffd34e !important;
+        opacity:1 !important;
+        visibility:visible !important;
+        filter:none !important;
     }}
-    [data-testid=\"stVerticalBlockBorderWrapper\"],
-    [data-testid=\"stForm\"], .stAlert {{
-        background:rgba(52, 24, 0, .82);
-        border-color:rgba(255,210,90,.45);
+
+    /* Các khung nội dung sáng, chữ đen; không làm mờ, không đổ bóng chữ */
+    [data-testid="stVerticalBlockBorderWrapper"],
+    [data-testid="stForm"],
+    [data-testid="stExpander"],
+    [data-testid="stAlert"],
+    [data-testid="stNotification"] {{
+        background:rgba(255, 250, 235, .98) !important;
+        border:1px solid #d9a52d !important;
+        border-radius:12px !important;
+        opacity:1 !important;
+        filter:none !important;
     }}
-    h1,h2,h3,p,label,span {{ text-shadow:0 1px 3px rgba(0,0,0,.45); }}
-    [data-testid=\"stMarkdownContainer\"] p, label {{ color:#fff4d7; }}
-    div.stButton > button, div.stDownloadButton > button {{
-        background:linear-gradient(90deg,#ffbd32,#ffe06a);
-        color:#3b2100; border:0; border-radius:12px; font-weight:800;
+    [data-testid="stMarkdownContainer"],
+    [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stCaptionContainer"],
+    [data-testid="stWidgetLabel"],
+    label,
+    [data-testid="stExpander"] summary,
+    [data-testid="stExpander"] summary *,
+    [data-testid="stAlert"] *,
+    [data-testid="stNotification"] *,
+    [data-testid="stTabs"] button,
+    h1,h2,h3,h4,
+    p, li {{
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        opacity:1 !important;
+        text-shadow:none !important;
+        filter:none !important;
+    }}
+
+    /* Thanh bên tối thì dùng chữ trắng rõ */
+    [data-testid="stSidebar"] *,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] label {{
+        color:#fff8e8 !important;
+        -webkit-text-fill-color:#fff8e8 !important;
+        opacity:1 !important;
+        text-shadow:none !important;
+    }}
+
+    /* Ô nhập liệu nền trắng, chữ đen */
+    input, textarea,
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea,
+    [data-baseweb="select"] *,
+    [data-testid="stFileUploader"] section,
+    [data-testid="stFileUploader"] small {{
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        background-color:#ffffff !important;
+        opacity:1 !important;
+        text-shadow:none !important;
+    }}
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea {{
+        border:2px solid #9a6b12 !important;
+        border-radius:10px !important;
+    }}
+    [data-baseweb="select"] > div {{
+        background:#ffffff !important;
+        color:#111111 !important;
+    }}
+    [data-testid="stExpander"] > details > summary {{
+        background:#ffe9a6 !important;
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        opacity:1 !important;
+    }}
+
+    /* Nút bấm chữ đen đậm */
+    div.stButton > button,
+    div.stDownloadButton > button,
+    [data-testid="stFormSubmitButton"] button {{
+        background:#ffd34e !important;
+        color:#111111 !important;
+        -webkit-text-fill-color:#111111 !important;
+        border:2px solid #8b5a00 !important;
+        border-radius:12px !important;
+        font-weight:900 !important;
+        min-height:48px !important;
+        opacity:1 !important;
+        text-shadow:none !important;
     }}
     </style>
-    <div class=\"vn-banner\">HOÀNG SA TRƯỜNG SA LÀ CỦA VIỆT NAM ❤️</div>
+    <div class="vn-banner">HOÀNG SA TRƯỜNG SA LÀ CỦA VIỆT NAM ❤️</div>
     """,
     unsafe_allow_html=True,
 )
-
 
 st.title("🎬 BẮP AI VIDEO")
 st.caption("Tạo video giới thiệu sản phẩm TikTok Shop • Khung hình dọc 9:16")
@@ -126,16 +219,31 @@ import requests
 from urllib.parse import urlparse
 import fal_client
 
-# API keys: điền trong Streamlit Secrets hoặc nhập trực tiếp trong giao diện.
+# API keys được đọc kín từ Streamlit Secrets, không hiện ô nhập cho khách.
+# Cấu hình trong Streamlit Cloud > App > Settings > Secrets:
+# [ai]
+# gemini_api_key = "..."
+# fal_api_key = "..."
 def secret_value(name, default=""):
     try:
-        return str(st.secrets.get(name, default))
+        ai = st.secrets.get("ai", {})
+        value = ai.get(name.lower(), "") if hasattr(ai, "get") else ""
+        if not value:
+            value = st.secrets.get(name.upper(), st.secrets.get(name.lower(), default))
+        return str(value or default).strip()
     except Exception:
         return default
 
-st.title("🎬 BẮP AI VIDEO")
-st.caption("Tạo video review sản phẩm bằng nhân vật AI chuyển động • 9:16")
-st.warning("Video chuyển động được tạo qua dịch vụ AI bên ngoài. Cần API key và credits; không phải bản demo ảnh tĩnh.")
+GEMINI_KEY = secret_value("gemini_api_key")
+FAL_KEY = secret_value("fal_api_key")
+AI_READY = bool(GEMINI_KEY and FAL_KEY)
+
+st.caption("Tạo video dọc 9:16 với nhân vật AI chuyển động, kịch bản và giọng đọc tiếng Việt.")
+if AI_READY:
+    st.success("AI đã được cấu hình. Bạn chỉ cần dán link sản phẩm và chọn kiểu video.")
+else:
+    st.error("Ứng dụng chưa được quản trị viên cấu hình AI. Khách sử dụng không cần nhập API.")
+    st.info("Quản trị viên vào Streamlit Cloud → App settings → Secrets và thêm cấu hình [ai] gồm gemini_api_key và fal_api_key. Không dán API key vào phần chat hoặc gửi cho khách.")
 
 if "jobs" not in st.session_state:
     st.session_state.jobs = {}
@@ -203,29 +311,50 @@ def tts_file(text, voice, path, rate="+0%", pitch="+0Hz"):
         await edge_tts.Communicate(text=text, voice=voice, rate=rate, pitch=pitch).save(path)
     asyncio.run(_run())
 
-def make_script(gemini_key, product, details, style, seconds, character):
+def make_script(gemini_key, product, details, style, seconds, character, delivery):
     if not gemini_key:
-        raise RuntimeError("Cần Gemini API Key để viết kịch bản đúng thông tin sản phẩm. Nhập API key ở phần cấu hình.")
+        raise RuntimeError("Cần Gemini API Key để viết kịch bản. Hãy nhập API key ở phần cấu hình.")
     from google import genai
     from google.genai import types
+
+    genre_rules = {
+        "Tin tức / bản tin": "Dẫn như bản tin truyền hình: mở đầu rõ sự kiện, thông tin theo thứ tự, giọng nghiêm túc và trung lập. Chỉ đưa tin về sản phẩm nếu có dữ liệu xác thực; không bịa tin nóng, số liệu hay nguồn tin.",
+        "Quảng cáo bán hàng": "Phong cách quảng cáo hấp dẫn, nhịp nhanh, nêu lợi ích có căn cứ, lời kêu gọi hành động tự nhiên. Không phóng đại, không cam kết quá mức.",
+        "Review chân thật": "Nói như người mua đang chia sẻ: gần gũi, có điểm thích và lưu ý nếu có căn cứ; không giả vờ đã sử dụng nếu dữ liệu không chứng minh.",
+        "Trải nghiệm sử dụng": "Kể lại cách dùng theo từng bước, biểu cảm tự nhiên, chỉ mô tả trải nghiệm có thông tin hỗ trợ.",
+        "Giải pháp vấn đề": "Mở đầu bằng nhu cầu thường gặp, giải thích sản phẩm hỗ trợ thế nào dựa trên thông tin có thật, tránh tuyên bố chữa bệnh hoặc hiệu quả chắc chắn.",
+        "Kể chuyện": "Dẫn chuyện ngắn có tình huống đời thường, chuyển ý mượt, kết nối tự nhiên với sản phẩm.",
+        "Tư vấn / hướng dẫn": "Giải thích rõ ràng như người tư vấn, từng ý ngắn gọn, dễ hiểu, hướng dẫn đúng công dụng đã được xác minh.",
+        "Phóng sự / giới thiệu": "Phong cách phóng sự giới thiệu: quan sát, mô tả bối cảnh, thông tin có trình tự, không tạo sự kiện giả."
+    }
+    genre_instruction = genre_rules.get(style, "Nội dung tự nhiên, rõ ràng và đúng dữ liệu.")
+
     prompt = f"""
-Bạn là biên kịch video TikTok Shop tiếng Việt tự nhiên, nói như người thật.
+Bạn là biên kịch và đạo diễn video tiếng Việt.
 Sản phẩm: {product}
-Thông tin được xác minh từ trang/khách cung cấp: {details}
-Kiểu video: {style}
+Thông tin được lấy từ trang hoặc do người dùng cung cấp: {details}
+Thể loại đã chọn: {style}
+Quy tắc thể loại: {genre_instruction}
 Nhân vật: {character}
 Thời lượng mục tiêu: {seconds} giây.
-Viết lời thoại miền Nam Việt Nam gần gũi, rõ chữ, câu nói liền mạch, không dùng giọng miền Bắc,
-không bịa giá, chất liệu, kích thước, công dụng, chứng nhận hoặc trải nghiệm chưa có dữ liệu.
-Nếu thiếu thông tin thì nói trung tính hoặc bỏ qua. Kịch bản có mở đầu thu hút, cầm/giới thiệu sản phẩm,
-nêu 2-3 điểm có căn cứ, kết thúc tự nhiên. Không đọc tên link hay mã sản phẩm.
-Trả về JSON object: {{"script":"toàn bộ lời thoại liên tục","visual_prompt":"mô tả hành động nhân vật theo từng nhịp, khớp sản phẩm và lời thoại","caption":"caption ngắn"}}.
+
+Viết lời thoại tiếng Việt tự nhiên theo khẩu ngữ miền Nam, câu nói trôi chảy,
+rõ chữ, dễ nghe, không dùng từ ngữ đặc trưng miền Bắc. Không được tự nhận giọng vùng
+miền nếu giọng tổng hợp không hỗ trợ chính xác.
+Lời thoại phải vừa thời lượng, có mở đầu, phần chính và kết thúc; không đọc URL.
+Không bịa giá, chất liệu, kích thước, công dụng, chứng nhận, đánh giá hay trải nghiệm.
+Nếu thông tin thiếu thì nói trung tính hoặc bỏ qua.
+Mô tả chuyển động hình ảnh theo từng nhịp tương ứng với lời thoại, nhân vật nhìn camera,
+cử động đầu, tay và thao tác sản phẩm tự nhiên. Sản phẩm phải giữ đúng hình dáng và màu sắc.
+
+Trả về JSON object:
+{{"script":"toàn bộ lời thoại liên tục","visual_prompt":"mô tả hành động khớp từng đoạn thoại","caption":"caption ngắn","shot_plan":"các nhịp hình ảnh theo trình tự"}}
 """
     client = genai.Client(api_key=gemini_key)
     res = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
-        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.75),
+        config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.72),
     )
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", (res.text or "").strip(), flags=re.I)
     data = json.loads(raw)
@@ -317,7 +446,7 @@ def attach_vietnamese_voice(video_bytes, narration, voice, rate, pitch):
         return Path(final).read_bytes()
 
 def worker(job_id, link, details, uploaded_bytes, uploaded_name, gender, age, same_character, character_desc,
-           style, seconds, gemini_key, fal_key, voice, rate, pitch):
+           style, seconds, gemini_key, fal_key, voice, rate, pitch, delivery):
     try:
         product = extract_product_page(link)
         title = product.get("title") or "Sản phẩm TikTok Shop"
@@ -332,7 +461,7 @@ def worker(job_id, link, details, uploaded_bytes, uploaded_name, gender, age, sa
             raise RuntimeError("Không lấy được ảnh sản phẩm từ link. Hãy tải ảnh sản phẩm lên để AI giữ đúng mẫu.")
         combined_details = "\n".join(x for x in [description, details] if x)
         # Character identity is selected before worker launch and passed as a stable description.
-        script = make_script(gemini_key, title, combined_details, style, seconds, character_desc)
+        script = make_script(gemini_key, title, combined_details, style, seconds, character_desc, delivery)
         video = create_real_motion_video(image_bytes, title, script, character_desc, gender, age, seconds, fal_key)
         final_video = attach_vietnamese_voice(video, script["script"], voice, rate, pitch)
         outdir = os.path.join(tempfile.gettempdir(), "bap_ai_private_history")
@@ -346,10 +475,7 @@ def worker(job_id, link, details, uploaded_bytes, uploaded_name, gender, age, sa
 # ---------------------------------------------------------
 # FORM TẠO VIDEO — mỗi lần bấm là một job riêng, xử lý nền.
 # ---------------------------------------------------------
-with st.expander("🔑 Cấu hình AI (chỉ nhập API key, không chia sẻ công khai)", expanded=True):
-    gemini_key = st.text_input("Gemini API Key — viết kịch bản", value=secret_value("GEMINI_API_KEY"), type="password")
-    fal_key = st.text_input("Fal.ai API Key — tạo nhân vật và video chuyển động", value=secret_value("FAL_KEY"), type="password")
-    st.caption("Video chuyển động cần Fal.ai credits. Gemini viết kịch bản. Edge TTS tạo giọng đọc; giọng miền Nam/Miền Tây có thể chưa được nhà cung cấp hỗ trợ đúng vùng.")
+st.caption("🔒 API được quản trị viên cấu hình kín trong Streamlit Secrets. Người dùng không thấy và không phải nhập API key.")
 
 with st.form("create_video_form", clear_on_submit=False):
     product_link = st.text_input("Dán link sản phẩm TikTok Shop", placeholder="https://...")
@@ -361,17 +487,41 @@ with st.form("create_video_form", clear_on_submit=False):
         age = st.selectbox("Độ tuổi", ["trẻ 20–30 tuổi", "trưởng thành 30–45 tuổi", "trung niên 45–60 tuổi", "người lớn tuổi 60–75 tuổi"])
         seconds = st.selectbox("Thời lượng clip AI", [5, 10], index=1)
     with col2:
-        style = st.selectbox("Kiểu nội dung", ["Review chân thật", "Trải nghiệm sử dụng", "Giải pháp vấn đề", "Giới thiệu bán hàng"])
-        voice = st.selectbox("Giọng đọc tiếng Việt", ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"])
-        rate = st.selectbox("Tốc độ nói", ["-5%", "+0%", "+5%"], index=1)
+        style = st.selectbox(
+            "🎬 Thể loại video",
+            ["Review chân thật", "Quảng cáo bán hàng", "Tin tức / bản tin",
+             "Trải nghiệm sử dụng", "Giải pháp vấn đề", "Kể chuyện",
+             "Tư vấn / hướng dẫn", "Phóng sự / giới thiệu"],
+        )
+        voice_label = st.selectbox(
+            "🎙️ Giọng đọc tiếng Việt",
+            ["Nữ Hoài My (giọng nữ)", "Nam Minh (giọng nam)"],
+        )
+        voice = {
+            "Nữ Hoài My (giọng nữ)": "vi-VN-HoaiMyNeural",
+            "Nam Minh (giọng nam)": "vi-VN-NamMinhNeural",
+        }[voice_label]
+        delivery = st.selectbox(
+            "🎧 Cách thể hiện giọng",
+            ["Tự nhiên, trò chuyện", "Tin tức, rõ và điềm tĩnh",
+             "Quảng cáo, tươi sáng", "Kể chuyện, truyền cảm"],
+        )
+        rate = st.selectbox("Tốc độ nói", ["Chậm -5%", "Vừa +0%", "Nhanh +5%"], index=1)
+        rate = {"Chậm -5%": "-5%", "Vừa +0%": "+0%", "Nhanh +5%": "+5%"}[rate]
+        pitch = {
+            "Tự nhiên, trò chuyện": "+0Hz",
+            "Tin tức, rõ và điềm tĩnh": "-2Hz",
+            "Quảng cáo, tươi sáng": "+2Hz",
+            "Kể chuyện, truyền cảm": "-1Hz",
+        }[delivery]
     same_character = st.checkbox("Giữ cùng một nhân vật cho các video cùng sản phẩm", value=True)
     submit_job = st.form_submit_button("➕ ĐƯA VIDEO VÀO HÀNG ĐỢI", use_container_width=True)
 
 if submit_job:
     if not product_link.strip():
         st.error("Bạn cần dán link sản phẩm.")
-    elif not gemini_key.strip() or not fal_key.strip():
-        st.error("Cần nhập cả Gemini API Key và Fal.ai API Key.")
+    elif not AI_READY:
+        st.error("AI chưa được quản trị viên cấu hình. Bạn không cần nhập API; hãy báo quản trị viên thiết lập Streamlit Secrets.")
     else:
         jid = hashlib.sha1(f"{product_link}{time.time_ns()}".encode()).hexdigest()[:14]
         char_desc = choose_character(gender, age, same_character, product_link.strip())
@@ -379,8 +529,8 @@ if submit_job:
         photo_name = product_photo.name if product_photo else ""
         future = EXECUTOR.submit(
             worker, jid, product_link.strip(), product_details.strip(), photo_bytes, photo_name,
-            gender, age, same_character, char_desc, style, int(seconds), gemini_key.strip(), fal_key.strip(),
-            voice, rate, "+0Hz"
+            gender, age, same_character, char_desc, style, int(seconds), GEMINI_KEY, FAL_KEY,
+            voice, rate, pitch, delivery
         )
         st.session_state.jobs[jid] = {"future": future, "submitted": time.time(), "link": product_link.strip()}
         st.success("Đã đưa vào hàng đợi. Bạn có thể tiếp tục nhập sản phẩm khác trong lúc video đang xử lý.")
@@ -402,6 +552,9 @@ for jid, job in list(st.session_state.jobs.items()):
                                    file_name=f"bap_ai_{jid}.mp4", mime="video/mp4", key=f"dl_{jid}")
                 st.write("**Kịch bản / lời thoại:**")
                 st.write(result["script"]["script"])
+                if result["script"].get("shot_plan"):
+                    with st.expander("Xem phân cảnh và hành động nhân vật"):
+                        st.write(result["script"]["shot_plan"])
                 st.session_state.history.insert(0, {"id": jid, "title": result["title"], "path": result["path"],
                     "created": result["created"], "link": result["link"], "script": result["script"]["script"]})
             else:
