@@ -1,11 +1,20 @@
-import streamlit as st
-from PIL import Image, ImageOps
-from io import BytesIO
+import asyncio
+import concurrent.futures
+import json
+import os
 import re
+import subprocess
+import tempfile
+import textwrap
+from io import BytesIO
 
-# -------------------------------------------------
-# CẤU HÌNH
-# -------------------------------------------------
+import edge_tts
+import imageio_ffmpeg
+import streamlit as st
+from google import genai
+from google.genai import types
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
 st.set_page_config(
     page_title="BẮP AI VIDEO - TikTok Shop Edition",
     page_icon="🎬",
@@ -14,206 +23,200 @@ st.set_page_config(
 
 if "duration" not in st.session_state:
     st.session_state.duration = "20 giây"
-if "jobs" not in st.session_state:
-    st.session_state.jobs = []
 
-# -------------------------------------------------
-# GIAO DIỆN
-# -------------------------------------------------
-st.markdown("""
-<style>
-.stApp {background:#f1f5f9;color:#0f172a}
-.block-container {max-width:760px;padding-top:1.2rem;padding-bottom:2rem}
-.header-card {
- background:linear-gradient(135deg,#162033 0%,#0f172a 100%);
- padding:22px 20px;border-radius:20px;margin-bottom:22px;
- box-shadow:0 8px 20px rgba(15,23,42,.15)
-}
-.section-label {
- color:#475569;font-weight:700;font-size:12px;letter-spacing:.5px;
- margin:16px 0 8px 0
-}
-.stTextArea textarea,.stTextInput input {
- background:#fff!important;color:#0f172a!important;
- border-radius:14px!important;border:1px solid #e2e8f0!important
-}
-div[data-testid="column"] button {
- width:100%;border-radius:12px!important;font-weight:600!important
-}
-.avatar-box {
- background:#fff;border-radius:16px;padding:12px;
- border:1px solid #e2e8f0;text-align:center
-}
-div.stButton>button[kind="primary"] {
- background:linear-gradient(135deg,#2563eb,#1d4ed8);
- color:white;border:0;border-radius:15px;font-weight:700;
- min-height:48px
-}
-</style>
-""", unsafe_allow_html=True)
+def run_async(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
 
-st.markdown("""
-<div class="header-card">
- <div style="display:flex;justify-content:space-between;align-items:center">
-  <div>
-   <h3 style="margin:0;color:white;font-size:22px;font-weight:800">BẮP AI VIDEO</h3>
-   <p style="margin:2px 0 10px;color:#94a3b8;font-size:12px;font-weight:600">TIKTOK SHOP EDITION</p>
-  </div>
-  <div style="font-size:28px">🎬</div>
- </div>
- <span style="background:#064e3b;color:#34d399;padding:4px 10px;border-radius:8px;font-size:11px;font-weight:700">
-  FREE-FIRST SYSTEM
- </span>
- <h2 style="margin:14px 0 6px;color:white;font-size:18px">Từ link sản phẩm đến video quảng cáo</h2>
- <p style="margin:0;color:#cbd5e1;font-size:12px;line-height:1.5">
-  Quản lý link sản phẩm · Chọn nhân vật · Chuẩn bị nội dung video 9:16
- </p>
-</div>
-""", unsafe_allow_html=True)
+async def generate_tts_mp3(text: str, voice: str, out_path: str):
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(out_path)
 
-st.subheader("Giao diện thao tác trên iPhone")
+def get_unicode_font(size: int):
+    candidate_fonts = [
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+    ]
+    for path in candidate_fonts:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size=size)
+    return ImageFont.load_default()
 
-# -------------------------------------------------
-# NHẬP LINK SẢN PHẨM
-# -------------------------------------------------
-st.markdown('<div class="section-label">LINK SẢN PHẨM TIKTOK SHOP — MỖI DÒNG MỘT LINK</div>', unsafe_allow_html=True)
-product_links = st.text_area(
-    "Danh sách link sản phẩm",
-    placeholder="Dán link sản phẩm thứ nhất...\nDán link sản phẩm thứ hai...",
-    height=110,
-    label_visibility="collapsed",
-    key="product_links",
-)
+def generate_script_with_gemini(
+    api_key: str,
+    product_input: str,
+    product_note: str,
+    duration_str: str,
+    reviewer_style: str,
+):
+    seconds = int(duration_str.split()[0])
+    num_scenes = max(2, min(6, seconds // 5))
+    target_words = int(seconds * 2.6)
 
-links = []
-for line in product_links.splitlines():
-    candidate = line.strip()
-    if candidate and candidate not in links:
-        links.append(candidate)
+    if not api_key.strip():
+        return [
+            {
+                "caption": "Đừng lướt qua nếu bạn đang tìm món này!",
+                "voiceover": "Khoan đã! Nếu bạn đang tìm một sản phẩm vừa chất lượng vừa tiết kiệm thì xem hết clip này nha.",
+            },
+            {
+                "caption": "Thiết kế gọn đẹp, dùng cực kỳ tiện",
+                "voiceover": f"Đây là em {product_note or 'sản phẩm hot trend'} đang làm mưa làm gió trên TikTok Shop mấy hôm nay.",
+            },
+            {
+                "caption": "Nhấn giỏ hàng góc trái chốt đơn ngay!",
+                "voiceover": "Hiện tại đang có mã giảm giá cực hời trong giỏ hàng góc trái, bấm mua ngay kẻo hết nha!",
+            },
+        ][:num_scenes]
 
-st.caption(f"Đã nhập {len(links)} link không trùng.")
+    prompt = f"""
+Bạn là chuyên gia viết kịch bản video bán hàng TikTok Shop triệu view bằng tiếng Việt.
+Hãy viết 1 kịch bản video ngắn khoảng {seconds} giây (tổng cộng khoảng {target_words} từ tiếng Việt tự nhiên).
 
-# -------------------------------------------------
-# THỜI LƯỢNG
-# -------------------------------------------------
-st.markdown('<div class="section-label">THỜI LƯỢNG VIDEO</div>', unsafe_allow_html=True)
-durations = ["10 giây", "20 giây", "30 giây", "40 giây"]
-duration_cols = st.columns(4)
-for i, duration in enumerate(durations):
-    with duration_cols[i]:
-        if st.button(
-            duration,
-            key=f"duration_{i}",
-            type="primary" if st.session_state.duration == duration else "secondary",
-            use_container_width=True,
-        ):
-            st.session_state.duration = duration
-            st.rerun()
+Thông tin đầu vào:
+- Link / Sản phẩm: {product_input}
+- Mô tả: {product_note if product_note else "Sản phẩm tiện ích hot trên TikTok Shop"}
+- Phong cách: {reviewer_style}
 
-# -------------------------------------------------
-# NHÂN VẬT — RADIO ĐỂ CHỈ CHỌN MỘT
-# -------------------------------------------------
-st.markdown('<div class="section-label">NHÂN VẬT REVIEWER</div>', unsafe_allow_html=True)
-c1, c2 = st.columns(2)
-with c1:
-    st.markdown("""
-    <div class="avatar-box">
-      <div style="font-size:42px">👩🏻</div>
-      <b style="color:#1e293b">Nữ Reviewer</b>
-      <div style="font-size:11px;color:#64748b">Giọng nữ tiếng Việt</div>
-    </div>
-    """, unsafe_allow_html=True)
-with c2:
-    st.markdown("""
-    <div class="avatar-box">
-      <div style="font-size:42px">👨🏻</div>
-      <b style="color:#1e293b">Nam Reviewer</b>
-      <div style="font-size:11px;color:#64748b">Giọng nam tiếng Việt</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-reviewer = st.radio(
-    "Chọn một nhân vật",
-    ["Nữ Reviewer", "Nam Reviewer"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="reviewer",
-)
-
-# -------------------------------------------------
-# TẢI ẢNH
-# -------------------------------------------------
-with st.expander("➕ Tải ảnh sản phẩm hoặc ảnh nhân vật (tùy chọn)", expanded=False):
-    uploaded_file = st.file_uploader(
-        "Chọn ảnh JPG, JPEG hoặc PNG",
-        type=["jpg", "jpeg", "png"],
-        key="uploaded_image",
+Yêu cầu chia đúng {num_scenes} cảnh liên tiếp: Hook -> Nỗi đau -> Giải pháp -> Kêu gọi mua hàng.
+Trả về ĐÚNG định dạng JSON là một danh sách các object, mỗi object gồm 2 khóa:
+- "caption": chữ hiển thị ngắn gọn trên màn hình (tối đa 10 chữ)
+- "voiceover": lời thoại đọc thành tiếng (tự nhiên, không dùng emoji)
+"""
+    client = genai.Client(api_key=api_key.strip())
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.7,
+        ),
     )
-    if uploaded_file is not None:
-        try:
-            image = Image.open(uploaded_file)
-            image = ImageOps.exif_transpose(image).convert("RGB")
-            st.image(image, caption="Ảnh đã tải lên", use_container_width=True)
-        except Exception:
-            st.error("Không đọc được ảnh. Vui lòng chọn file JPG hoặc PNG khác.")
+    raw = response.text.strip()
+    raw = re.sub(r"^```json\s*|\s*```$", "", raw, flags=re.MULTILINE)
+    return json.loads(raw)
 
-# -------------------------------------------------
-# GHI CHÚ SẢN PHẨM
-# -------------------------------------------------
-st.markdown('<div class="section-label">MÔ TẢ SẢN PHẨM (TÙY CHỌN)</div>', unsafe_allow_html=True)
-product_note = st.text_area(
-    "Mô tả sản phẩm",
-    placeholder="Ví dụ: tên sản phẩm, màu sắc, chất liệu, công dụng, điểm nổi bật...",
-    height=90,
-    label_visibility="collapsed",
-    key="product_note",
-)
+def render_vertical_frame(
+    bg_image: Image.Image | None,
+    title_text: str,
+    caption_text: str,
+    reviewer_badge: str,
+    out_png_path: str,
+):
+    W, H = 1080, 1920
+    if bg_image is not None:
+        img = ImageOps.exif_transpose(bg_image).convert("RGB")
+        bg = ImageOps.fit(img, (W, H), method=Image.Resampling.LANCZOS)
+        bg = bg.filter(ImageFilter.GaussianBlur(radius=28))
+        overlay = Image.new("RGBA", (W, H), (10, 15, 30, 110))
+        canvas = Image.alpha_composite(bg.convert("RGBA"), overlay)
 
-# -------------------------------------------------
-# XỬ LÝ YÊU CẦU — KHÔNG GIẢ VỜ TẠO VIDEO
-# -------------------------------------------------
-st.markdown("")
-if st.button("🚀 KIỂM TRA & CHUẨN BỊ DANH SÁCH VIDEO", type="primary", use_container_width=True):
-    if not links:
-        st.error("Bạn chưa nhập link sản phẩm. Hãy dán ít nhất một link.")
-    elif len(links) > 20:
-        st.error("Mỗi lượt hiện hỗ trợ tối đa 20 link để tránh quá tải.")
+        fg = img.copy()
+        fg.thumbnail((960, 1120), Image.Resampling.LANCZOS)
+        fw, fh = fg.size
+        canvas.paste(fg, ((W - fw) // 2, (H - fh) // 2 - 40))
     else:
-        invalid = [u for u in links if not re.match(r"^https?://", u, flags=re.I)]
-        if invalid:
-            st.error("Có link không đúng định dạng. Link cần bắt đầu bằng http:// hoặc https://.")
-            for bad in invalid:
-                st.write(f"• {bad}")
-        else:
-            st.session_state.jobs = [
-                {
-                    "link": link,
-                    "duration": st.session_state.duration,
-                    "reviewer": reviewer,
-                    "note": product_note.strip(),
-                    "status": "Đã nhận link — chờ kết nối bộ xử lý video",
-                }
-                for link in links
+        canvas = Image.new("RGBA", (W, H), (15, 23, 42, 255))
+
+    draw = ImageDraw.Draw(canvas)
+    font_badge = get_unicode_font(34)
+    draw.rounded_rectangle([(60, 110), (W - 60, 195)], radius=28, fill=(15, 23, 42, 200))
+    draw.text((W // 2, 152), f"TIKTOK SHOP REVIEW  •  {reviewer_badge}", font=font_badge, fill=(52, 211, 153, 255), anchor="mm")
+
+    font_sub = get_unicode_font(52)
+    wrapped_caption = textwrap.fill(caption_text, width=24)
+    bbox = draw.multiline_textbbox((0, 0), wrapped_caption, font=font_sub, align="center")
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    
+    box_y_center = 1480
+    draw.rounded_rectangle([max(50, (W - tw)//2 - 48), box_y_center - th//2 - 32, min(W - 50, (W + tw)//2 + 48), box_y_center + th//2 + 32], radius=30, fill=(0, 0, 0, 195))
+    draw.multiline_text((W // 2, box_y_center), wrapped_caption, font=font_sub, fill=(255, 255, 255, 255), anchor="mm", align="center")
+    canvas.convert("RGB").save(out_png_path, format="PNG")
+
+def build_tiktok_video(scenes, voice_id, reviewer_badge, product_title, images):
+    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        segment_paths = []
+        for idx, scene in enumerate(scenes):
+            voice_text = scene.get("voiceover", "").strip()
+            caption_text = scene.get("caption", voice_text).strip()
+            if not voice_text:
+                continue
+
+            mp3_path = os.path.join(tmpdir, f"audio_{idx}.mp3")
+            png_path = os.path.join(tmpdir, f"frame_{idx}.png")
+            seg_path = os.path.join(tmpdir, f"seg_{idx}.mp4")
+
+            run_async(generate_tts_mp3(voice_text, voice_id, mp3_path))
+            img_for_scene = images[idx % len(images)] if images else None
+            render_vertical_frame(img_for_scene, product_title, caption_text, reviewer_badge, png_path)
+
+            cmd_seg = [
+                ffmpeg_exe, "-y", "-loop", "1", "-i", png_path, "-i", mp3_path,
+                "-c:v", "libx264", "-tune", "stillimage", "-preset", "veryfast",
+                "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", seg_path
             ]
-            st.success(f"Đã kiểm tra hợp lệ {len(links)} link.")
-            st.info(
-                "Đây mới là bước kiểm tra và chuẩn bị danh sách. "
-                "Bản code giao diện này chưa tải được dữ liệu/ảnh trực tiếp từ TikTok Shop "
-                "và chưa kết xuất MP4. Cần tích hợp bộ lấy dữ liệu sản phẩm, tạo kịch bản, "
-                "giọng đọc và FFmpeg trước khi có thể tạo video thật."
-            )
+            subprocess.run(cmd_seg, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            segment_paths.append(seg_path)
 
-# -------------------------------------------------
-# DANH SÁCH ĐÃ NHẬN
-# -------------------------------------------------
-if st.session_state.jobs:
-    st.markdown('<div class="section-label">DANH SÁCH SẢN PHẨM ĐÃ NHẬN</div>', unsafe_allow_html=True)
-    for index, job in enumerate(st.session_state.jobs, start=1):
-        with st.container(border=True):
-            st.markdown(f"**Sản phẩm {index}**")
-            st.write(job["link"])
-            st.caption(
-                f'{job["duration"]} · {job["reviewer"]} · {job["status"]}'
-            )
+        concat_txt = os.path.join(tmpdir, "segments.txt")
+        with open(concat_txt, "w", encoding="utf-8") as f:
+            for p in segment_paths:
+                f.write(f"file '{p.replace(os.sep, '/')}'\n")
 
-st.caption("BẮP AI VIDEO · Giao diện thử nghiệm. Không nhập API key hoặc mật khẩu TikTok vào ô link.")
+        final_mp4 = os.path.join(tmpdir, "final_tiktok_9_16.mp4")
+        subprocess.run([ffmpeg_exe, "-y", "-f", "concat", "-safe", "0", "-i", concat_txt, "-c", "copy", final_mp4], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(final_mp4, "rb") as f:
+            return f.read()
+
+# GIAO DIỆN
+st.title("🎬 BẮP AI VIDEO - TIKTOK SHOP")
+
+product_links = st.text_area("Link sản phẩm TikTok Shop", placeholder="Dán link sản phẩm tại đây...")
+duration_str = st.selectbox("Thời lượng video", ["10 giây", "20 giây", "30 giây", "40 giây"])
+st.session_state.duration = duration_str
+
+col1, col2 = st.columns(2)
+with col1:
+    select_female = st.checkbox("Chọn Nữ Reviewer (Hoài My)", value=True)
+with col2:
+    select_male = st.checkbox("Chọn Nam Reviewer (Nam Minh)", value=False)
+
+voice_choice = "vi-VN-HoaiMyNeural" if select_female else "vi-VN-NamMinhNeural"
+reviewer_badge = "🌟 Bắp Review Chính Hãng" if select_female else "🔥 Nam Review Official"
+
+uploaded_files = st.file_uploader("Tải lên ảnh sản phẩm", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+gemini_key = st.text_input("Gemini API Key (Tùy chọn)", type="password", placeholder="Để trống nếu dùng kịch bản mẫu...")
+
+if st.button("🚀 BẮT ĐẦU TẠO VIDEO TIKTOK", type="primary", use_container_width=True):
+    if not product_links.strip():
+        st.warning("⚠️ Vui lòng nhập link sản phẩm trước khi tạo video!")
+    else:
+        with st.status("🎬 Đang tự động hóa sản xuất video...", expanded=True) as status:
+            try:
+                st.write("1️⃣ Đang tạo kịch bản AI...")
+                scenes = generate_script_with_gemini(gemini_key, product_links, "Sản phẩm hot", st.session_state.duration, "Reviewer năng động")
+
+                st.write("2️⃣ Đang xử lý ảnh...")
+                pil_images = [Image.open(f) for f in uploaded_files] if uploaded_files else []
+
+                st.write("3️⃣ Đang lồng tiếng Edge-TTS và dựng video 9:16...")
+                video_bytes = build_tiktok_video(scenes, voice_choice, reviewer_badge, "Sản phẩm TikTok Shop", pil_images)
+
+                status.update(label="🎉 Tạo video thành công!", state="complete", expanded=False)
+                st.success("Video đã sẵn sàng!")
+                st.video(video_bytes)
+                st.download_button("📥 TẢI VIDEO VỀ MÁY", data=video_bytes, file_name="bap_ai_tiktok_video.mp4", mime="video/mp4", use_container_width=True)
+            except Exception as e:
+                status.update(label="❌ Lỗi khi dựng video!", state="error", expanded=True)
+                st.error(f"Chi tiết lỗi: {e}")
