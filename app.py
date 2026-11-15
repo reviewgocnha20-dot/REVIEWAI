@@ -183,7 +183,7 @@ Trả về ĐÚNG định dạng JSON là một danh sách các object, mỗi ob
     raw = response.text.strip()
     raw = re.sub(r"^```json\s*|\s*```$", "", raw, flags=re.MULTILINE)
     scenes = json.loads(raw)
-    return scenes
+    return  scenes
 
 
 def render_vertical_frame(
