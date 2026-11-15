@@ -402,23 +402,3 @@ for idx, d in enumerate(durations):
             st.session_state.duration = d
             st.rerun()
 
-# 3. Nhân vật & Giọng đọc
-st.markdown("<div class='section-label'>NHÂN VẬT & GIỌNG VIỆT</div>", unsafe_allow_html=True)
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("""
-        <div class="avatar-box">
-            <div style="font-size:40px; margin-bottom:4px;">👩🏻</div>
-            <div style="font-size:13px; font-weight:600; color:#1e293b;">Nữ Reviewer</div>
-            <div style="font-size:11px; color:#64748b;">Giọng Hoài My (Edge-TTS)</div>
-        </div>
-    """, unsafe_allow_html=True)
-    select_female = st.checkbox("Chọn Nữ Reviewer", value=True)
-
-with col2:
-    st.markdown("""
-        <div class="avatar-box">
-            <div style="font-size:40px; margin-bottom:4px;">👨🏻</div>
-            <div style="font-size:13px; font-weight:600; color:#1e293b;">Nam Reviewer</div>
-            <div style="font-size:11px; color:#
