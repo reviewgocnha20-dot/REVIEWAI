@@ -1,3 +1,4 @@
+
 import asyncio
 import concurrent.futures
 import importlib.util
@@ -8,12 +9,20 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import base64
+from io import BytesIO
 from typing import Optional
 
 import streamlit as st
 
-# Tự cài thư viện còn thiếu để Bắp chỉ cần thay MỘT file app.py.
-# Streamlit đã được cài sẵn trên Streamlit Cloud nên không cài lại.
+# CẤU HÌNH STREAMLIT PHẢI ĐẶT TRƯỚC CÁC LỆNH GIAO DIỆN
+st.set_page_config(
+    page_title="BẮP AI VIDEO - TikTok Shop Edition",
+    page_icon="🎬",
+    layout="centered",
+)
+
+# TỰ CÀI THƯ VIỆN CÒN THIẾU
 _PACKAGES = {
     "edge_tts": "edge-tts",
     "imageio_ffmpeg": "imageio-ffmpeg",
@@ -22,45 +31,63 @@ _PACKAGES = {
     "requests": "requests",
     "fal_client": "fal-client",
 }
+
 _missing = [
-    package for module, package in _PACKAGES.items()
+    package
+    for module, package in _PACKAGES.items()
     if importlib.util.find_spec(module) is None
 ]
+
 if _missing:
-    with st.spinner("Đang tự cài thư viện cần thiết lần đầu..."):
+    with st.spinner("Đang cài thư viện cần thiết..."):
         try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--quiet", *_missing]
-            )
+            subprocess.check_call([
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--quiet",
+                *_missing
+            ])
         except Exception as install_error:
-            st.error(
-                "Không thể tự cài thư viện: "
-                + ", ".join(_missing)
-                + f". Chi tiết: {install_error}"
-            )
+            st.error(f"Không thể cài thư viện: {install_error}")
             st.stop()
 
 try:
     import edge_tts
     import imageio_ffmpeg
+    import requests
+    import fal_client
+
     from google import genai
     from google.genai import types
     from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
 except Exception as import_error:
-    st.error(f"Không nạp được thư viện sau khi cài: {import_error}")
+    st.error(f"Lỗi nạp thư viện: {import_error}")
     st.stop()
 
 # ---------------------------------------------------------
-# CẤU HÌNH
+# CẤU HÌNH ẢNH NỀN
 # ---------------------------------------------------------
-st.set_page_config(
-    page_title="BẮP AI VIDEO - TikTok Shop Edition",
-    page_icon="🎬",
-    layout="centered",
-)
 
-# ---------------------------------------------------------
-# GIAO DIỆN NỀN BẢN ĐỒ VIỆT NAM
-# Ảnh nền được nhúng trực tiếp trong app.py để chỉ cần một file code.
-# ---------------------------------------------------------
-BACKGROUND_IMAGE_B64 = """/9j/4AAQSkZJRgABAQAASABIAAD/4QCARXhpZgAATU0AKgAAAAgABQESAAMAAAABAAEAAAEaAAUAAAABAAAASgEbAAUAAAABAAAAUgEoAAMAAAABAAIAAIdpAAQAAAABAAAAWgAAAAAAAABIAAAAAQAAAEgAAAABAAKgAgAEAAAAAQAAAsKgAwAEAAAAAQAABgAAAAAA/+0AOFBob3Rvc2hopCAzLjAAOEJJTQQEAAAAAAAAOEJJTQQlAAAAAAAQ1B2M2Y8AsgTpgAmY7PhCfv/iAihJQ0NfUFJPRklMRQABAQAAAhhhcHBsBAAAAG1udHJSR0IgWFlaIAfmAAEAAQAAAAAAAGFjc3BBUFBMAAAAAEFQUEwAAAAAAAAAAAAAAAAAAAAAAAD21gABAAAAANMtYXBwbAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACmRlc2MAAAD8AAAAMGNwcnQAAAEsAAAAUHd0cHQAAAF8AAAAFHJYWVoAAAGQAAAAFGdYWVoAAAGkAAAAFGJYWVoAAAG4AAAAFHJUUkMAAAHMAAAAIGNoYWQAAAHsAAAALGJUUkMAAAHMAAAAIGdUUkMAAAHMAAAAIG1sdWMAAAAAAAAAAQAAAAxlblVTAAAAFAAAABwARABpAHMAcABsAGEAeQAgAFAAM21sdWMAAAAAAAAAAQAAAAxlblVTAAAANAAAABwAQwBvAHAAeQByAGkAZwBoAHQAIABBAHAAcABsAGUAIABJAG4AYwAuACwAIAAyADAAMgAyWFlaIAAAAAAAAPbVAAEAAAAA0yxYWVogAAAAAAAAg98AAD2/////u1hZWiAAAAAAAABKvwAAsTcAAAq5WFlaIAAAAAAAACg4AAARCwAAyLlwYXJhAAAAAAADAAAAAmZmAADypwAADVkAABPQAAAKW3NmMzIAAAAAAAEMQgAABd7///MmAAAHkwAA/ZD///ui///9owAAA9wAAMBu/8AAEQgGAALCAwEiAAIRAQMRAf/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/bAEMAAQEBAQEBAgEBAgMCAgIDBAMDAwMEBQQEBAQEBQYFBQUFBQUGBgYGBgYGBgcHBwcHBwgICAgICQkJCQkJCQkJCf/bAEMBAQEBAgICBAICBAkGBQYJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCJCQkJCf/dAAQALf/aAAwDAQACEQMRAD8A/wA/+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//R/wA/+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//S/wA/+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//T/wA/+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//U/wA/+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//V/wA/+iiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKAP//W/wA/+iiigAooooAKKK19E0DW/EmoJpWgWst5cSfdjiUs3146D3PFAGRRX1N4e/Zd1eZBN431m00cHkwoDdTj2KxkID9Xr1Cz/Zx+BtuAupaxrN0ccmFLeEE+wfzDQB8E0V933/7NvwZukYaRruq2b/wm4hhnX8fLaM/pXkniX9mPxfp6Nc+D7221+JedsBMVxj/rjJgn6KWoA+a6KtXtleabdPY6hE8E0R2vHIpVlPoQeRVWgAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACii
+# Không sử dụng chuỗi Base64 bị cắt dở.
+# Cần bổ sung ảnh nền hợp lệ để khôi phục hình nền bản đồ Việt Nam.
+BACKGROUND_IMAGE_B64 = ""
+
+def load_background_image():
+    if not BACKGROUND_IMAGE_B64:
+        return None
+
+    try:
+        image_data = base64.b64decode(
+            BACKGROUND_IMAGE_B64,
+            validate=True
+        )
+        image = Image.open(BytesIO(image_data))
+        image.load()
+        return image.convert("RGB")
+
+    except Exception as error:
+        st.warning(f"Không thể tải ảnh nền: {error}")
+        return None
