@@ -1,56 +1,33 @@
 import asyncio
 import concurrent.futures
-import importlib.util
 import json
 import os
 import re
 import subprocess
-import sys
 import tempfile
 import textwrap
 from typing import Optional
 
 import streamlit as st
 
-# Tự cài thư viện còn thiếu để Bắp chỉ cần thay MỘT file app.py.
-# Streamlit đã được cài sẵn trên Streamlit Cloud nên không cài lại.
-_PACKAGES = {
-    "edge_tts": "edge-tts",
-    "imageio_ffmpeg": "imageio-ffmpeg",
-    "PIL": "Pillow",
-    "google": "google-genai",
-}
-_missing = [
-    package for module, package in _PACKAGES.items()
-    if importlib.util.find_spec(module) is None
-]
-if _missing:
-    with st.spinner("Đang tự cài thư viện cần thiết lần đầu..."):
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--quiet", *_missing]
-            )
-        except Exception as install_error:
-            st.error(
-                "Không thể tự cài thư viện: "
-                + ", ".join(_missing)
-                + f". Chi tiết: {install_error}"
-            )
-            st.stop()
-
+# Cấu hình trang phải chạy trước các lệnh giao diện khác.
+# Các thư viện dưới đây được cài bởi Streamlit Cloud từ requirements.txt.
+# Không tự chạy pip install trong lúc ứng dụng đang hoạt động.
 try:
     import edge_tts
     import imageio_ffmpeg
     from google import genai
     from google.genai import types
     from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
-except Exception as import_error:
-    st.error(f"Không nạp được thư viện sau khi cài: {import_error}")
+except ModuleNotFoundError as error:
+    missing_module = error.name or "thư viện không xác định"
+    st.error(
+        f"Thiếu thư viện: {missing_module}. "
+        "Hãy bảo đảm file requirements.txt nằm cùng thư mục với app.py "
+        "trên GitHub, sau đó khởi động lại ứng dụng Streamlit."
+    )
     st.stop()
 
-# ---------------------------------------------------------
-# CẤU HÌNH
-# ---------------------------------------------------------
 st.set_page_config(
     page_title="BẮP AI VIDEO - TikTok Shop Edition",
     page_icon="🎬",
