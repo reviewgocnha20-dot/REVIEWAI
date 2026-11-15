@@ -1,80 +1,67 @@
+
 # -*- coding: utf-8 -*-
-"""BẮP AI VIDEO — Streamlit app.
-
-Streamlit Secrets required:
-SUPABASE_URL, SUPABASE_KEY, FAL_KEY, ADMIN_EMAIL
-
-Never put a Supabase service-role key in a public repository.
-Use the anon/publishable key and enforce permissions with Supabase RLS.
+"""
+BẮP AI VIDEO - TIKTOK SHOP EDITION
+Image: FLUX Kontext
+Video: Kling 3.0
+Voice: Edge TTS
+Database/Auth: Supabase
+Payment: VietQR
 """
 
-import asyncio
-import importlib.util
 import os
-import subprocess
-import sys
+import base64
+import asyncio
 import uuid
+from pathlib import Path
 from urllib.parse import quote
 
 import streamlit as st
+import fal_client
+import edge_tts
 
-# Page config must be the first Streamlit UI command.
-st.set_page_config(page_title="BẮP AI VIDEO", page_icon="🎬", layout="wide")
-
-
-# Install runtime dependencies so the app can run from one app.py file.
-# For production deployments, pin these packages in requirements.txt instead.
-_PACKAGES = {
-    "dotenv": "python-dotenv",
-    "supabase": "supabase",
-    "fal_client": "fal-client",
-    "edge_tts": "edge-tts",
-}
-_missing = [
-    package
-    for module, package in _PACKAGES.items()
-    if importlib.util.find_spec(module) is None
-]
-if _missing:
-    with st.spinner("Đang cài thư viện cần thiết lần đầu..."):
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "--quiet", *_missing]
-            )
-        except Exception as install_error:
-            st.error(f"Không thể cài thư viện: {install_error}")
-            st.stop()
-
-try:
-    from dotenv import load_dotenv
-    from supabase import create_client, Client
-    import fal_client
-    import edge_tts
-except Exception as import_error:
-    st.error(f"Không nạp được thư viện: {import_error}")
-    st.stop()
-
-load_dotenv()
+from supabase import create_client, Client
 
 
-def get_env(key: str, default: str = "") -> str:
-    """Read Streamlit Secrets first, then environment variables."""
+# =====================================================
+# 1. CẤU HÌNH ỨNG DỤNG
+# =====================================================
+
+st.set_page_config(
+    page_title="BẮP AI VIDEO",
+    page_icon="🎬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+
+def get_env(key, default=""):
     try:
         value = st.secrets.get(key, "")
         if value:
             return str(value)
     except Exception:
         pass
+
     return os.getenv(key, default)
 
 
 SUPABASE_URL = get_env("SUPABASE_URL")
 SUPABASE_KEY = get_env("SUPABASE_KEY")
 FAL_KEY = get_env("FAL_KEY")
-ADMIN_EMAIL = get_env("ADMIN_EMAIL", "admin@bapaivideo.com").strip().lower()
+ADMIN_EMAIL = get_env(
+    "ADMIN_EMAIL",
+    "admin@example.com"
+).lower().strip()
+
 
 COST_IMAGE_EDIT = 2
 COST_VIDEO_GEN = 10
+
+
+# =====================================================
+# 2. THÔNG TIN THANH TOÁN
+# =====================================================
 
 BANK_INFO = {
     "bank_code": "PVCB",
@@ -84,85 +71,193 @@ BANK_INFO = {
     "account_name_ascii": "NGO VAN KHANH",
 }
 
+
 CREDIT_PACKAGES = [
     {
         "id": "starter",
-        "name": "Gói Cơ Bản",
+        "name": "GÓI CƠ BẢN",
         "amount": 50000,
         "credits": 50,
         "badge": "TIẾT KIỆM",
-        "description": "Dành cho trải nghiệm tạo ảnh và video ngắn.",
+        "description": "Dành cho người mới bắt đầu."
     },
     {
         "id": "pro",
-        "name": "Gói Pro",
+        "name": "GÓI PRO",
         "amount": 199000,
         "credits": 250,
-        "badge": "PHỔ BIẾN NHẤT",
-        "description": "Phù hợp nhà sáng tạo nội dung và bán hàng.",
+        "badge": "PHỔ BIẾN",
+        "description": "Dành cho nhà sáng tạo nội dung."
     },
     {
         "id": "studio",
-        "name": "Gói Studio",
+        "name": "GÓI STUDIO",
         "amount": 499000,
         "credits": 700,
         "badge": "SIÊU ƯU ĐÃI",
-        "description": "Dành cho agency và sản xuất số lượng lớn.",
-    },
+        "description": "Dành cho người dùng chuyên nghiệp."
+    }
 ]
 
+
 VOICES = {
-    "Nữ miền Nam — Hoài My": "vi-VN-HoaiMyNeural",
-    "Nam miền Bắc — Nam Minh": "vi-VN-NamMinhNeural",
+    "Nữ miền Nam - Hoài My": "vi-VN-HoaiMyNeural",
+    "Nam miền Bắc - Nam Minh": "vi-VN-NamMinhNeural",
 }
 
 
-def build_transfer_content(user_id: str, tx_id: str) -> str:
-    return (
-        f"BAPAI {str(user_id).replace('-', '')[:4].upper()} "
-        f"{str(tx_id).replace('-', '')[:4].upper()}"
+# =====================================================
+# 3. GIAO DIỆN NỀN BẢN ĐỒ VIỆT NAM
+# =====================================================
+
+def load_background():
+
+    bg_path = Path(__file__).parent / "bap_background.png"
+
+    if not bg_path.exists():
+        st.warning(
+            "Chưa tìm thấy bap_background.png. "
+            "Hãy tải ảnh nền lên GitHub cùng thư mục app.py."
+        )
+        return
+
+    with open(bg_path, "rb") as image_file:
+        bg_base64 = base64.b64encode(
+            image_file.read()
+        ).decode("utf-8")
+
+    st.markdown(
+        f"""
+        <style>
+
+        .stApp {{
+            background:
+                linear-gradient(
+                    rgba(5, 5, 15, 0.68),
+                    rgba(5, 5, 15, 0.82)
+                ),
+                url("data:image/png;base64,{bg_base64}");
+
+            background-size: cover;
+            background-position: center center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }}
+
+        [data-testid="stHeader"] {{
+            background: rgba(0,0,0,0.10);
+        }}
+
+        [data-testid="stSidebar"] {{
+            background: rgba(10, 10, 22, 0.94);
+            border-right: 1px solid rgba(255,215,0,0.25);
+        }}
+
+        [data-testid="stSidebar"] * {{
+            color: white !important;
+        }}
+
+        h1, h2, h3, h4, p, label {{
+            color: white !important;
+        }}
+
+        [data-testid="stMetric"] {{
+            background: rgba(20,20,35,0.85);
+            border: 1px solid rgba(255,215,0,0.35);
+            border-radius: 15px;
+            padding: 15px;
+        }}
+
+        [data-testid="stMetricValue"] {{
+            color: #FFD700 !important;
+        }}
+
+        [data-testid="stMetricLabel"] {{
+            color: white !important;
+        }}
+
+        [data-testid="stForm"] {{
+            background: rgba(15,15,30,0.86);
+            padding: 20px;
+            border-radius: 18px;
+            border: 1px solid rgba(255,215,0,0.30);
+        }}
+
+        div.stButton > button {{
+            border-radius: 12px;
+            font-weight: bold;
+            min-height: 45px;
+        }}
+
+        div.stButton > button[kind="primary"] {{
+            background: linear-gradient(90deg,#b8860b,#ffd700);
+            color: #111 !important;
+            border: none;
+        }}
+
+        div.stButton > button[kind="primary"]:hover {{
+            background: #ffe45c;
+            color: #111 !important;
+        }}
+
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextArea"] textarea {{
+            border-radius: 10px;
+        }}
+
+        [data-testid="stFileUploader"] {{
+            background: rgba(20,20,35,0.75);
+            border-radius: 12px;
+            padding: 10px;
+        }}
+
+        [data-testid="stTabs"] button {{
+            color: white !important;
+        }}
+
+        hr {{
+            border-color: rgba(255,215,0,0.3);
+        }}
+
+        </style>
+        """,
+        unsafe_allow_html=True
     )
 
 
-def build_vietqr_url(amount: int, add_info: str) -> str:
-    bank = BANK_INFO["bank_code"]
-    account = BANK_INFO["account_number"]
-    name = quote(BANK_INFO["account_name_ascii"])
-    info = quote(add_info)
-    return (
-        f"https://img.vietqr.io/image/{bank}-{account}-compact2.png"
-        f"?amount={int(amount)}&addInfo={info}&accountName={name}"
-    )
+# =====================================================
+# 4. KẾT NỐI SUPABASE
+# =====================================================
 
-
+@st.cache_resource(show_spinner=False)
 def get_supabase() -> Client:
-    """Create one Supabase client per Streamlit user session.
 
-    Do not use st.cache_resource here: a globally cached authenticated
-    Supabase client can accidentally share auth state between users.
-    """
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise RuntimeError(
-            "Thiếu SUPABASE_URL hoặc SUPABASE_KEY trong Streamlit Secrets."
+            "Thiếu SUPABASE_URL hoặc SUPABASE_KEY trong Secrets."
         )
 
-    client = st.session_state.get("_supabase_client")
-    if client is None:
-        client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        st.session_state["_supabase_client"] = client
-    return client
+    return create_client(
+        SUPABASE_URL,
+        SUPABASE_KEY
+    )
 
 
 def current_user():
     return st.session_state.get("user")
 
 
-def rpc(name: str, params: dict):
-    return get_supabase().rpc(name, params).execute().data
+def rpc(name, params):
+    return get_supabase().rpc(
+        name,
+        params
+    ).execute().data
 
 
 def refresh_profile():
+
     user = current_user()
+
     if not user:
         return None
 
@@ -175,336 +270,757 @@ def refresh_profile():
         .execute()
         .data
     )
+
     return rows[0] if rows else None
 
 
 def sign_out():
+
     try:
         get_supabase().auth.sign_out()
     except Exception:
         pass
+
     st.session_state.pop("user", None)
     st.session_state.pop("profile", None)
-    st.session_state.pop("_supabase_client", None)
     st.session_state.pop("show_admin", None)
+
     st.rerun()
 
 
-def auth_panel():
-    st.title("🎬 BẮP AI VIDEO")
-    st.caption("Sáng tạo hình ảnh, video và giọng đọc bằng AI")
+# =====================================================
+# 5. ĐĂNG NHẬP - ĐĂNG KÝ - QUÊN MẬT KHẨU
+# =====================================================
 
-    login_tab, signup_tab = st.tabs(["Đăng nhập", "Tạo tài khoản"])
+def auth_panel():
+
+    st.title("🎬 BẮP AI VIDEO")
+
+    st.caption(
+        "SÁNG TẠO HÌNH ẢNH - VIDEO - GIỌNG ĐỌC BẰNG AI"
+    )
+
+    st.markdown(
+        "🇻🇳 **HOÀNG SA, TRƯỜNG SA LÀ CỦA VIỆT NAM**"
+    )
+
     sb = get_supabase()
 
+    login_tab, signup_tab, forgot_tab = st.tabs([
+        "🔐 ĐĂNG NHẬP",
+        "✨ TẠO TÀI KHOẢN",
+        "🔑 QUÊN MẬT KHẨU"
+    ])
+
+    # -----------------------------
+    # ĐĂNG NHẬP
+    # -----------------------------
+
     with login_tab:
+
+        st.subheader("Chào mừng bạn quay lại!")
+
         with st.form("login_form"):
-            email = st.text_input("Email", key="login_email")
+
+            email = st.text_input(
+                "Email",
+                placeholder="Nhập email"
+            ).strip().lower()
+
             password = st.text_input(
-                "Mật khẩu", type="password", key="login_password"
+                "Mật khẩu",
+                type="password",
+                placeholder="Nhập mật khẩu"
             )
+
             submitted = st.form_submit_button(
-                "Đăng nhập", use_container_width=True
+                "ĐĂNG NHẬP",
+                use_container_width=True,
+                type="primary"
             )
 
         if submitted:
-            if not email.strip() or not password:
+
+            if not email or not password:
                 st.warning("Vui lòng nhập email và mật khẩu.")
+
             else:
+
                 try:
-                    result = sb.auth.sign_in_with_password(
-                        {"email": email.strip(), "password": password}
-                    )
-                    if not result.user:
-                        raise RuntimeError("Supabase không trả về tài khoản người dùng.")
-                    st.session_state.user = result.user
-                    st.rerun()
+
+                    result = sb.auth.sign_in_with_password({
+                        "email": email,
+                        "password": password
+                    })
+
+                    if result.user:
+
+                        st.session_state.user = result.user
+
+                        st.session_state.pop(
+                            "profile",
+                            None
+                        )
+
+                        st.success("Đăng nhập thành công!")
+
+                        st.rerun()
+
                 except Exception as exc:
-                    st.error(f"Đăng nhập không thành công: {exc}")
+
+                    error = str(exc).lower()
+
+                    if "invalid login credentials" in error:
+
+                        st.error(
+                            "Email hoặc mật khẩu không chính xác. "
+                            "Hãy kiểm tra lại."
+                        )
+
+                    elif "email not confirmed" in error:
+
+                        st.warning(
+                            "Email chưa được xác nhận. "
+                            "Hãy kiểm tra hộp thư."
+                        )
+
+                    elif "too many requests" in error:
+
+                        st.warning(
+                            "Bạn đã thử quá nhiều lần. "
+                            "Hãy đợi một lúc."
+                        )
+
+                    else:
+
+                        st.error(
+                            f"Đăng nhập thất bại: {exc}"
+                        )
+
+    # -----------------------------
+    # ĐĂNG KÝ
+    # -----------------------------
 
     with signup_tab:
+
+        st.subheader("Tạo tài khoản mới")
+
         with st.form("signup_form"):
-            email = st.text_input("Email", key="signup_email")
-            password = st.text_input(
-                "Mật khẩu (ít nhất 8 ký tự)",
+
+            new_email = st.text_input(
+                "Email",
+                placeholder="Nhập email"
+            ).strip().lower()
+
+            new_password = st.text_input(
+                "Mật khẩu",
                 type="password",
-                key="signup_password",
-            )
-            submitted = st.form_submit_button(
-                "Tạo tài khoản", use_container_width=True
+                placeholder="Tối thiểu 8 ký tự"
             )
 
-        if submitted:
-            if not email.strip():
-                st.warning("Vui lòng nhập email.")
-            elif len(password) < 8:
-                st.warning("Mật khẩu cần ít nhất 8 ký tự.")
+            confirm_password = st.text_input(
+                "Xác nhận mật khẩu",
+                type="password"
+            )
+
+            signup = st.form_submit_button(
+                "TẠO TÀI KHOẢN",
+                use_container_width=True,
+                type="primary"
+            )
+
+        if signup:
+
+            if not new_email or not new_password:
+
+                st.warning("Vui lòng điền đầy đủ thông tin.")
+
+            elif len(new_password) < 8:
+
+                st.warning("Mật khẩu phải có ít nhất 8 ký tự.")
+
+            elif new_password != confirm_password:
+
+                st.error("Mật khẩu xác nhận không khớp.")
+
             else:
+
                 try:
-                    result = sb.auth.sign_up(
-                        {"email": email.strip(), "password": password}
-                    )
+
+                    result = sb.auth.sign_up({
+                        "email": new_email,
+                        "password": new_password
+                    })
+
                     if result.session and result.user:
+
                         st.session_state.user = result.user
-                        st.success("Tạo tài khoản thành công.")
+
+                        st.success("Tạo tài khoản thành công!")
+
                         st.rerun()
+
                     else:
+
                         st.success(
-                            "Đã gửi email xác nhận. Hãy xác nhận email rồi đăng nhập."
+                            "Đăng ký thành công! "
+                            "Hãy xác nhận email trước khi đăng nhập."
                         )
+
                 except Exception as exc:
-                    st.error(f"Không thể tạo tài khoản: {exc}")
+
+                    st.error(
+                        f"Không thể tạo tài khoản: {exc}"
+                    )
+
+    # -----------------------------
+    # QUÊN MẬT KHẨU
+    # -----------------------------
+
+    with forgot_tab:
+
+        st.subheader("Khôi phục mật khẩu")
+
+        with st.form("forgot_form"):
+
+            reset_email = st.text_input(
+                "Email đăng ký",
+                placeholder="Nhập email"
+            ).strip().lower()
+
+            reset = st.form_submit_button(
+                "GỬI EMAIL KHÔI PHỤC",
+                use_container_width=True,
+                type="primary"
+            )
+
+        if reset:
+
+            if not reset_email:
+
+                st.warning("Vui lòng nhập email.")
+
+            else:
+
+                try:
+
+                    sb.auth.reset_password_email(
+                        reset_email
+                    )
+
+                    st.success(
+                        "Đã gửi yêu cầu khôi phục. "
+                        "Hãy kiểm tra email và thư mục Spam."
+                    )
+
+                except Exception as exc:
+
+                    st.error(
+                        f"Không gửi được email: {exc}"
+                    )
 
 
-def require_fal() -> bool:
+# =====================================================
+# 6. FAL AI
+# =====================================================
+
+def require_fal():
+
     if not FAL_KEY:
-        st.error("Chưa cấu hình FAL_KEY trong Streamlit Secrets.")
+
+        st.error(
+            "Chưa cấu hình FAL_KEY trong Streamlit Secrets."
+        )
+
         return False
+
     os.environ["FAL_KEY"] = FAL_KEY
+
     return True
 
 
-def upload_to_fal(uploaded_file) -> str:
-    if not uploaded_file:
-        raise ValueError("Bạn chưa chọn tệp.")
+def upload_to_fal(uploaded_file):
+
     return fal_client.upload(
         uploaded_file.getvalue(),
-        content_type=uploaded_file.type or "application/octet-stream",
+        content_type=uploaded_file.type
     )
 
 
+# =====================================================
+# 7. CHỈNH SỬA ẢNH FLUX KONTEXT
+# =====================================================
+
 def image_workspace():
-    st.subheader("🖼️ Tạo / chỉnh sửa ảnh — FLUX Kontext")
+
+    st.header("🖼️ CHỈNH SỬA ẢNH AI")
+
     st.caption(
-        f"Mỗi lượt chỉnh sửa trừ {COST_IMAGE_EDIT} Credits. "
-        "Ảnh đầu vào sẽ được tải lên fal.ai để xử lý."
+        f"FLUX Kontext | Chi phí: {COST_IMAGE_EDIT} Credits/lượt"
     )
 
     source = st.file_uploader(
-        "Ảnh cần chỉnh sửa",
+        "Tải ảnh sản phẩm hoặc ảnh cần chỉnh sửa",
         type=["png", "jpg", "jpeg", "webp"],
-        key="edit_image",
+        key="edit_image"
     )
+
+    if source:
+
+        st.image(
+            source,
+            caption="Ảnh gốc",
+            use_container_width=True
+        )
+
     prompt = st.text_area(
-        "Mô tả thay đổi",
-        placeholder="Ví dụ: Đổi nền thành studio trắng, giữ nguyên sản phẩm và logo.",
-        key="edit_prompt",
+        "Mô tả chỉnh sửa",
+        height=130,
+        placeholder=(
+            "Ví dụ: Đổi nền thành studio sang trọng, "
+            "giữ nguyên hình dáng và màu sắc sản phẩm."
+        )
     )
 
     if st.button(
-        "✨ Chỉnh sửa ảnh",
+        "✨ CHỈNH SỬA ẢNH",
         type="primary",
-        disabled=not (source and prompt.strip()),
+        use_container_width=True,
+        disabled=not (source and prompt.strip())
     ):
+
         if not require_fal():
             return
 
+        charged = False
+
         try:
-            with st.spinner("Đang tải ảnh và gửi yêu cầu chỉnh sửa..."):
+
+            with st.spinner("Đang kiểm tra Credits..."):
+
+                rpc(
+                    "spend_credits",
+                    {
+                        "p_amount": COST_IMAGE_EDIT,
+                        "p_reason": "FLUX Kontext"
+                    }
+                )
+
+                charged = True
+
+            with st.spinner("AI đang chỉnh sửa ảnh..."):
+
                 image_url = upload_to_fal(source)
+
                 result = fal_client.subscribe(
                     "fal-ai/flux-pro/kontext",
                     arguments={
                         "prompt": prompt.strip(),
                         "image_url": image_url,
-                        "num_images": 1,
-                    },
+                        "num_images": 1
+                    }
                 )
 
             images = result.get("images", [])
-            if not images or not images[0].get("url"):
-                raise RuntimeError(f"fal.ai không trả về ảnh hợp lệ: {result}")
 
-            # Chỉ trừ Credits sau khi API trả kết quả thành công.
-            with st.spinner("Đang trừ Credits..."):
-                rpc(
-                    "spend_credits",
-                    {
-                        "p_amount": COST_IMAGE_EDIT,
-                        "p_reason": "FLUX Kontext",
-                    },
+            if not images:
+
+                raise RuntimeError(
+                    "fal.ai không trả về ảnh kết quả."
                 )
 
+            result_url = images[0]["url"]
+
+            st.success("Chỉnh sửa ảnh thành công!")
+
             st.image(
-                images[0]["url"],
-                caption="Ảnh đã tạo",
-                use_container_width=True,
-            )
-            st.markdown(f"[Mở ảnh kết quả]({images[0]['url']})")
-            st.success("Hoàn tất.")
-        except Exception as exc:
-            st.error(f"Tạo ảnh thất bại: {exc}")
-            st.info(
-                "Nếu API đã tạo ảnh nhưng bước trừ Credits gặp lỗi, "
-                "hãy liên hệ quản trị viên để đối soát."
+                result_url,
+                caption="Ảnh AI đã tạo",
+                use_container_width=True
             )
 
+            st.markdown(
+                f"[⬇️ Mở ảnh kết quả]({result_url})"
+            )
+
+        except Exception as exc:
+
+            st.error(f"Chỉnh sửa ảnh thất bại: {exc}")
+
+            if charged:
+
+                st.warning(
+                    "Yêu cầu đã được tính Credits trước khi xử lý. "
+                    "Nếu API lỗi, hãy liên hệ quản trị viên để đối soát."
+                )
+
+
+# =====================================================
+# 8. TẠO VIDEO KLING 3.0
+# =====================================================
 
 def video_workspace():
-    st.subheader("🎥 Tạo video — Kling 3.0")
+
+    st.header("🎥 TẠO VIDEO AI")
+
     st.caption(
-        f"Mỗi lượt tạo video trừ {COST_VIDEO_GEN} Credits. "
-        "Endpoint Kling V3 Standard."
+        f"Kling 3.0 Standard | Chi phí: {COST_VIDEO_GEN} Credits/lượt"
     )
 
     source = st.file_uploader(
-        "Ảnh bắt đầu video",
+        "Tải ảnh bắt đầu video",
         type=["png", "jpg", "jpeg", "webp"],
-        key="video_image",
+        key="video_image"
     )
+
+    if source:
+
+        st.image(
+            source,
+            caption="Ảnh đầu vào",
+            use_container_width=True
+        )
+
     prompt = st.text_area(
-        "Mô tả chuyển động",
-        placeholder="Ví dụ: Máy quay tiến chậm, sản phẩm xoay nhẹ, ánh sáng studio.",
-        key="video_prompt",
+        "Mô tả chuyển động video",
+        height=150,
+        placeholder=(
+            "Ví dụ: Máy quay tiến chậm về phía sản phẩm, "
+            "ánh sáng điện ảnh, chuyển động tự nhiên, "
+            "giữ nguyên thiết kế sản phẩm."
+        )
     )
-    duration = st.selectbox("Thời lượng", ["5", "10"], index=0)
+
+    duration = st.selectbox(
+        "Thời lượng video",
+        ["5", "10", "15"],
+        index=0
+    )
 
     if st.button(
-        "🎬 Tạo video",
+        "🎬 TẠO VIDEO KLING 3.0",
         type="primary",
-        disabled=not (source and prompt.strip()),
+        use_container_width=True,
+        disabled=not (source and prompt.strip())
     ):
+
         if not require_fal():
             return
 
+        charged = False
+
         try:
-            with st.spinner("Đang tải ảnh và gửi yêu cầu tạo video..."):
+
+            with st.spinner("Đang kiểm tra Credits..."):
+
+                rpc(
+                    "spend_credits",
+                    {
+                        "p_amount": COST_VIDEO_GEN,
+                        "p_reason": "Kling 3.0"
+                    }
+                )
+
+                charged = True
+
+            with st.spinner(
+                "Kling đang tạo video. Vui lòng chờ..."
+            ):
+
                 image_url = upload_to_fal(source)
+
                 result = fal_client.subscribe(
                     "fal-ai/kling-video/v3/standard/image-to-video",
                     arguments={
                         "image_url": image_url,
                         "prompt": prompt.strip(),
-                        "duration": duration,
-                    },
+                        "duration": duration
+                    }
                 )
 
-            video = result.get("video", {}).get("url")
-            if not video:
-                raise RuntimeError(f"fal.ai không trả về video hợp lệ: {result}")
+            video_url = result.get(
+                "video",
+                {}
+            ).get("url")
 
-            # Chỉ trừ Credits sau khi API trả video thành công.
-            with st.spinner("Đang trừ Credits..."):
-                rpc(
-                    "spend_credits",
-                    {
-                        "p_amount": COST_VIDEO_GEN,
-                        "p_reason": "Kling 3.0",
-                    },
+            if not video_url:
+
+                raise RuntimeError(
+                    "Không nhận được video từ Kling."
                 )
 
-            st.video(video)
-            st.markdown(f"[Mở video kết quả]({video})")
-            st.success("Hoàn tất.")
-        except Exception as exc:
-            st.error(f"Tạo video thất bại: {exc}")
-            st.info(
-                "Nếu API đã tạo video nhưng bước trừ Credits gặp lỗi, "
-                "hãy liên hệ quản trị viên để đối soát."
+            st.success("Tạo video thành công!")
+
+            st.video(video_url)
+
+            st.markdown(
+                f"[⬇️ Mở video kết quả]({video_url})"
             )
 
+        except Exception as exc:
+
+            st.error(f"Tạo video thất bại: {exc}")
+
+            if charged:
+
+                st.warning(
+                    "Credits đã được ghi nhận khi bắt đầu xử lý. "
+                    "Nếu API gặp lỗi, hãy liên hệ admin để đối soát."
+                )
+
+
+# =====================================================
+# 9. GIỌNG ĐỌC AI TIẾNG VIỆT
+# =====================================================
 
 def tts_workspace():
-    st.subheader("🎙️ Giọng đọc tiếng Việt — Edge TTS")
-    text = st.text_area("Nội dung cần đọc", height=160, key="tts_text")
-    voice_label = st.selectbox("Giọng đọc", list(VOICES))
-    rate = st.select_slider(
-        "Tốc độ",
-        options=["-20%", "-10%", "+0%", "+10%", "+20%"],
-        value="+0%",
+
+    st.header("🎙️ GIỌNG ĐỌC AI")
+
+    st.caption(
+        "Tạo giọng đọc tiếng Việt bằng Microsoft Edge TTS."
     )
 
-    if st.button("Tạo giọng đọc", disabled=not text.strip()):
+    text_content = st.text_area(
+        "Nội dung cần đọc",
+        height=200,
+        placeholder="Nhập lời thoại quảng cáo của bạn..."
+    )
+
+    voice_label = st.selectbox(
+        "Chọn giọng đọc",
+        list(VOICES.keys())
+    )
+
+    rate = st.select_slider(
+        "Tốc độ đọc",
+        options=[
+            "-20%",
+            "-10%",
+            "+0%",
+            "+10%",
+            "+20%"
+        ],
+        value="+0%"
+    )
+
+    if st.button(
+        "🎙️ TẠO GIỌNG ĐỌC",
+        type="primary",
+        use_container_width=True,
+        disabled=not text_content.strip()
+    ):
+
         try:
+
             async def make_audio():
+
                 communicate = edge_tts.Communicate(
-                    text.strip(),
+                    text_content.strip(),
                     VOICES[voice_label],
-                    rate=rate,
+                    rate=rate
                 )
+
                 chunks = []
+
                 async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio":
+
+                    if chunk["type"] == "audio":
+
                         chunks.append(chunk["data"])
+
                 return b"".join(chunks)
 
-            audio = asyncio.run(make_audio())
-            if audio:
-                st.audio(audio, format="audio/mpeg")
-                st.download_button(
-                    "⬇️ Tải MP3",
-                    audio,
-                    "bap_ai_voice.mp3",
-                    "audio/mpeg",
-                )
-            else:
-                st.error("Không nhận được dữ liệu âm thanh.")
-        except Exception as exc:
-            st.error(f"Không tạo được giọng đọc: {exc}")
+            with st.spinner("Đang tạo giọng đọc..."):
 
+                audio = asyncio.run(make_audio())
+
+            if audio:
+
+                st.success("Tạo giọng đọc thành công!")
+
+                st.audio(
+                    audio,
+                    format="audio/mpeg"
+                )
+
+                st.download_button(
+                    "⬇️ TẢI FILE MP3",
+                    data=audio,
+                    file_name="bap_ai_voice.mp3",
+                    mime="audio/mpeg",
+                    use_container_width=True
+                )
+
+            else:
+
+                st.error("Không nhận được dữ liệu âm thanh.")
+
+        except Exception as exc:
+
+            st.error(f"Lỗi tạo giọng đọc: {exc}")
+
+
+# =====================================================
+# 10. VIETQR
+# =====================================================
+
+def build_transfer_content(user_id, tx_id):
+
+    return (
+        f"BAPAI "
+        f"{user_id.replace('-', '')[:4].upper()} "
+        f"{tx_id.replace('-', '')[:4].upper()}"
+    )
+
+
+def build_vietqr_url(amount, add_info):
+
+    bank = BANK_INFO["bank_code"]
+    stk = BANK_INFO["account_number"]
+
+    name = quote(
+        BANK_INFO["account_name_ascii"]
+    )
+
+    info = quote(add_info)
+
+    return (
+        f"https://img.vietqr.io/image/"
+        f"{bank}-{stk}-compact2.png"
+        f"?amount={amount}"
+        f"&addInfo={info}"
+        f"&accountName={name}"
+    )
+
+
+# =====================================================
+# 11. NẠP CREDITS
+# =====================================================
 
 def topup_workspace(user):
-    st.subheader("💳 Nạp Credits qua VietQR")
+
+    st.header("💳 NẠP CREDITS")
+
     st.warning(
         "Chuyển khoản đúng số tiền và nội dung. "
         "Credits chỉ được cộng sau khi admin xác nhận."
     )
 
     for package in CREDIT_PACKAGES:
+
         with st.container(border=True):
-            c1, c2, c3 = st.columns([2, 2, 1])
-            c1.markdown(f"**{package['name']}** · {package['badge']}")
-            c1.caption(package["description"])
-            c2.markdown(f"**{package['amount']:,}đ**")
-            c2.write(f"{package['credits']} Credits")
 
-            if c3.button("Chọn gói", key=f"buy_{package['id']}"):
+            c1, c2, c3 = st.columns([2, 1, 1])
+
+            c1.markdown(
+                f"### {package['name']}"
+            )
+
+            c1.caption(
+                package["description"]
+            )
+
+            c1.caption(
+                package["badge"]
+            )
+
+            c2.markdown(
+                f"**{package['amount']:,}đ**"
+            )
+
+            c2.write(
+                f"{package['credits']} Credits"
+            )
+
+            if c3.button(
+                "CHỌN GÓI",
+                key=f"buy_{package['id']}"
+            ):
+
                 try:
-                    tx_id = str(uuid.uuid4())
-                    content = build_transfer_content(user.id, tx_id)
 
-                    get_supabase().table("topups").insert(
-                        {
-                            "id": tx_id,
-                            "user_id": user.id,
-                            "package_id": package["id"],
-                            "amount_vnd": package["amount"],
-                            "credits": package["credits"],
-                            "transfer_content": content,
-                            "status": "pending",
-                        }
-                    ).execute()
+                    tx_id = str(uuid.uuid4())
+
+                    content = build_transfer_content(
+                        user.id,
+                        tx_id
+                    )
+
+                    get_supabase().table(
+                        "topups"
+                    ).insert({
+                        "id": tx_id,
+                        "user_id": user.id,
+                        "package_id": package["id"],
+                        "amount_vnd": package["amount"],
+                        "credits": package["credits"],
+                        "transfer_content": content,
+                        "status": "pending"
+                    }).execute()
 
                     st.session_state["active_topup"] = {
                         "id": tx_id,
                         "amount": package["amount"],
-                        "content": content,
+                        "content": content
                     }
-                    st.rerun()
+
+                    st.success("Đã tạo yêu cầu nạp Credits.")
+
                 except Exception as exc:
-                    st.error(f"Không tạo được yêu cầu nạp: {exc}")
+
+                    st.error(
+                        f"Không tạo được yêu cầu: {exc}"
+                    )
 
     pending = st.session_state.get("active_topup")
+
     if pending:
+
         st.divider()
-        st.markdown("**Thông tin chuyển khoản**")
+
+        st.subheader("📱 THÔNG TIN CHUYỂN KHOẢN")
+
         st.image(
-            build_vietqr_url(pending["amount"], pending["content"]),
-            width=300,
+            build_vietqr_url(
+                pending["amount"],
+                pending["content"]
+            ),
+            width=300
         )
-        st.write(f"Ngân hàng: {BANK_INFO['bank_name']}")
-        st.write(f"Số tài khoản: {BANK_INFO['account_number']}")
-        st.write(f"Chủ tài khoản: {BANK_INFO['account_name_ascii']}")
+
+        st.write(
+            f"Ngân hàng: {BANK_INFO['bank_name']}"
+        )
+
+        st.write(
+            f"Số tài khoản: {BANK_INFO['account_number']}"
+        )
+
+        st.write(
+            f"Chủ tài khoản: {BANK_INFO['account_name_ascii']}"
+        )
+
+        st.markdown("**Nội dung chuyển khoản:**")
+
         st.code(pending["content"])
+
         st.caption(
             "Không sửa nội dung chuyển khoản. "
-            "Sau khi chuyển, chờ admin xác nhận."
+            "Sau khi chuyển tiền, chờ admin xác nhận."
         )
 
 
+# =====================================================
+# 12. LỊCH SỬ GIAO DỊCH
+# =====================================================
+
 def history_workspace(user):
-    st.subheader("📜 Lịch sử nạp Credits")
+
+    st.header("📜 LỊCH SỬ GIAO DỊCH")
+
     try:
+
         rows = (
             get_supabase()
             .table("topups")
@@ -519,21 +1035,38 @@ def history_workspace(user):
         )
 
         if rows:
-            st.dataframe(rows, use_container_width=True, hide_index=True)
-        else:
-            st.info("Chưa có giao dịch.")
-    except Exception as exc:
-        st.error(f"Không tải được lịch sử: {exc}")
 
+            st.dataframe(
+                rows,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+
+            st.info("Bạn chưa có giao dịch.")
+
+    except Exception as exc:
+
+        st.error(
+            f"Không tải được lịch sử: {exc}"
+        )
+
+
+# =====================================================
+# 13. QUẢN TRỊ VIÊN
+# =====================================================
 
 def admin_workspace():
-    st.subheader("🛡️ Quản trị — xác nhận nạp Credits")
+
+    st.header("🛡️ QUẢN TRỊ BẮP AI VIDEO")
+
     st.caption(
-        "Chỉ tài khoản có email trùng ADMIN_EMAIL mới thấy khu vực này. "
-        "RPC phía Supabase vẫn phải tự kiểm tra quyền admin."
+        "Chỉ tài khoản ADMIN_EMAIL mới có quyền truy cập."
     )
 
     try:
+
         rows = (
             get_supabase()
             .table("topups")
@@ -546,144 +1079,326 @@ def admin_workspace():
         )
 
         if not rows:
-            st.info("Không có yêu cầu đang chờ.")
+
+            st.success(
+                "Không có yêu cầu nạp Credits đang chờ."
+            )
 
         for item in rows:
+
             with st.container(border=True):
-                st.write(
-                    f"**{item['amount_vnd']:,}đ · {item['credits']} Credits**"
+
+                st.subheader(
+                    f"{item['amount_vnd']:,}đ"
                 )
-                st.write(f"User ID: `{item['user_id']}`")
-                st.code(item["transfer_content"])
+
+                st.write(
+                    f"Credits: {item['credits']}"
+                )
+
+                st.write(
+                    f"User ID: {item['user_id']}"
+                )
+
+                st.code(
+                    item["transfer_content"]
+                )
 
                 if st.button(
-                    "Xác nhận đã nhận tiền",
-                    key=f"approve_{item['id']}",
+                    "✅ XÁC NHẬN ĐÃ NHẬN TIỀN",
+                    key=f"approve_{item['id']}"
                 ):
+
                     try:
+
                         rpc(
                             "admin_approve_topup",
-                            {"p_topup_id": item["id"]},
+                            {
+                                "p_topup_id": item["id"]
+                            }
                         )
-                        st.success("Đã xác nhận và cộng Credits.")
+
+                        st.success(
+                            "Đã xác nhận và cộng Credits."
+                        )
+
                         st.rerun()
+
                     except Exception as exc:
-                        st.error(f"Không xác nhận được: {exc}")
+
+                        st.error(
+                            f"Không xác nhận được: {exc}"
+                        )
 
     except Exception as exc:
-        st.error(f"Không tải được yêu cầu nạp: {exc}")
 
+        st.error(
+            f"Không tải được yêu cầu nạp tiền: {exc}"
+        )
+
+
+# =====================================================
+# 14. TRANG CHỦ
+# =====================================================
 
 def main():
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background: linear-gradient(135deg, #0b1020 0%, #111a30 100%);
-        }
-        [data-testid="stMetric"] {
-            background: rgba(255,255,255,.06);
-            padding: 14px;
-            border-radius: 12px;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+
+    load_background()
+
+    # Kiểm tra cấu hình Supabase
 
     if not SUPABASE_URL or not SUPABASE_KEY:
+
         st.title("🎬 BẮP AI VIDEO")
+
         st.error(
-            "Chưa cấu hình Supabase. Hãy thêm SUPABASE_URL và "
-            "SUPABASE_KEY vào Streamlit Secrets."
+            "Chưa cấu hình Supabase. "
+            "Hãy kiểm tra Streamlit Secrets."
         )
+
         st.stop()
 
+    # Chưa đăng nhập
+
     if not current_user():
-        try:
-            auth_panel()
-        except Exception as exc:
-            st.error(f"Không thể mở đăng nhập: {exc}")
+
+        auth_panel()
+
         return
 
     user = current_user()
 
+    # Lấy hồ sơ
+
     try:
+
         profile = refresh_profile()
+
         if not profile:
+
             st.error(
                 "Không tìm thấy hồ sơ người dùng. "
-                "Hãy kiểm tra bảng profiles và chính sách RLS trong Supabase."
+                "Hãy kiểm tra bảng profiles và trigger tạo hồ sơ "
+                "trong Supabase."
             )
-            if st.button("Đăng xuất"):
+
+            if st.button("ĐĂNG XUẤT"):
+
                 sign_out()
+
             return
+
         st.session_state.profile = profile
+
     except Exception as exc:
-        st.error(f"Không tải được hồ sơ: {exc}")
-        return
+
+        st.error(
+            f"Không tải được hồ sơ: {exc}"
+        )
+
+        st.stop()
+
+    # Sidebar
 
     with st.sidebar:
-        st.title("🎬 BẮP AI VIDEO")
-        st.write(user.email or "")
-        st.metric("Số dư Credits", profile.get("credits", 0))
-        st.caption("Ảnh: 2 Credits · Video: 10 Credits")
 
-        if st.button("Đăng xuất", use_container_width=True):
+        st.title("🎬 BẮP AI VIDEO")
+
+        st.caption(
+            "🇻🇳 SÁNG TẠO CÙNG AI"
+        )
+
+        st.divider()
+
+        st.write(
+            f"👤 {user.email}"
+        )
+
+        st.metric(
+            "SỐ DƯ CREDITS",
+            profile.get("credits", 0)
+        )
+
+        st.caption(
+            "Ảnh: 2 Credits | Video: 10 Credits"
+        )
+
+        if st.button(
+            "🚪 ĐĂNG XUẤT",
+            use_container_width=True
+        ):
+
             sign_out()
 
         st.divider()
+
         page = st.radio(
-            "MENU",
+            "MENU CHỨC NĂNG",
             [
-                "Tổng quan",
-                "Chỉnh sửa ảnh",
-                "Tạo video",
-                "Giọng đọc AI",
-                "Nạp Credits",
-                "Lịch sử giao dịch",
-            ],
+                "🏠 Tổng quan",
+                "🖼️ Chỉnh sửa ảnh",
+                "🎥 Tạo video",
+                "🎙️ Giọng đọc AI",
+                "💳 Nạp Credits",
+                "📜 Lịch sử giao dịch"
+            ]
         )
 
-    st.title("Xin chào! 👋")
-    st.caption("Không gian sáng tạo nội dung bằng AI")
+        # Chỉ admin được mở quản trị
 
-    if page == "Tổng quan":
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Credits hiện có", profile.get("credits", 0))
-        c2.metric("Chi phí chỉnh ảnh", f"{COST_IMAGE_EDIT} Credits")
-        c3.metric("Chi phí tạo video", f"{COST_VIDEO_GEN} Credits")
-        st.info("Chọn chức năng ở thanh bên để bắt đầu sáng tạo.")
-        st.markdown("**BẮP AI VIDEO** · FLUX Kontext · Kling 3.0 · Edge TTS")
+        is_admin = (
+            (user.email or "").lower() == ADMIN_EMAIL
+        )
 
-    elif page == "Chỉnh sửa ảnh":
-        image_workspace()
+        if is_admin:
 
-    elif page == "Tạo video":
-        video_workspace()
-
-    elif page == "Giọng đọc AI":
-        tts_workspace()
-
-    elif page == "Nạp Credits":
-        topup_workspace(user)
-
-    elif page == "Lịch sử giao dịch":
-        history_workspace(user)
-
-    is_admin = (user.email or "").strip().lower() == ADMIN_EMAIL
-    if is_admin:
-        with st.sidebar:
             st.divider()
-            if st.button("Mở quản trị"):
+
+            if st.button(
+                "🛡️ MỞ QUẢN TRỊ",
+                use_container_width=True
+            ):
+
                 st.session_state["show_admin"] = True
 
-    if st.session_state.get("show_admin") and is_admin:
+            if st.button(
+                "Đóng quản trị",
+                use_container_width=True
+            ):
+
+                st.session_state["show_admin"] = False
+
+    # Nội dung chính
+
+    st.title("CHÀO MỪNG ĐẾN VỚI BẮP AI VIDEO 🇻🇳")
+
+    st.caption(
+        "Không gian sáng tạo nội dung bằng trí tuệ nhân tạo."
+    )
+
+    if page == "🏠 Tổng quan":
+
+        st.subheader("TỔNG QUAN TÀI KHOẢN")
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric(
+            "Credits hiện có",
+            profile.get("credits", 0)
+        )
+
+        c2.metric(
+            "Chỉnh sửa ảnh",
+            f"{COST_IMAGE_EDIT} Credits"
+        )
+
+        c3.metric(
+            "Tạo video",
+            f"{COST_VIDEO_GEN} Credits"
+        )
+
+        st.divider()
+
+        st.subheader("CÔNG CỤ AI")
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+
+            st.markdown("### 🖼️ FLUX KONTEXT")
+
+            st.write(
+                "Chỉnh sửa ảnh sản phẩm, thay đổi bối cảnh "
+                "và sáng tạo hình ảnh bằng AI."
+            )
+
+        with c2:
+
+            st.markdown("### 🎥 KLING 3.0")
+
+            st.write(
+                "Biến hình ảnh thành video AI "
+                "với chuyển động điện ảnh."
+            )
+
+        c3, c4 = st.columns(2)
+
+        with c3:
+
+            st.markdown("### 🎙️ EDGE TTS")
+
+            st.write(
+                "Tạo giọng đọc tiếng Việt "
+                "cho video quảng cáo."
+            )
+
+        with c4:
+
+            st.markdown("### 💳 CREDITS")
+
+            st.write(
+                "Nạp Credits và theo dõi giao dịch "
+                "ngay trong ứng dụng."
+            )
+
+        st.divider()
+
+        st.markdown(
+            "**BẮP AI VIDEO** · FLUX KONTEXT · KLING 3.0 · EDGE TTS"
+        )
+
+        st.markdown(
+            "🇻🇳 **HOÀNG SA, TRƯỜNG SA LÀ CỦA VIỆT NAM**"
+        )
+
+    elif page == "🖼️ Chỉnh sửa ảnh":
+
+        image_workspace()
+
+    elif page == "🎥 Tạo video":
+
+        video_workspace()
+
+    elif page == "🎙️ Giọng đọc AI":
+
+        tts_workspace()
+
+    elif page == "💳 Nạp Credits":
+
+        topup_workspace(user)
+
+    elif page == "📜 Lịch sử giao dịch":
+
+        history_workspace(user)
+
+    # Khu vực quản trị
+
+    if (
+        st.session_state.get("show_admin")
+        and (user.email or "").lower() == ADMIN_EMAIL
+    ):
+
+        st.divider()
+
         admin_workspace()
 
 
+# =====================================================
+# 15. CHẠY ỨNG DỤNG
+# =====================================================
+
 if __name__ == "__main__":
+
     try:
+
         main()
+
     except Exception as error:
-        st.error(f"Ứng dụng gặp lỗi: {error}")
+
+        st.error(
+            f"Ứng dụng gặp lỗi: {error}"
+        )
+
+        st.info(
+            "Hãy kiểm tra Streamlit Logs để xem chi tiết."
+        )
