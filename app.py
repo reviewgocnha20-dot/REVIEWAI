@@ -1,3 +1,4 @@
+
 import asyncio
 import concurrent.futures
 import json
@@ -10,9 +11,12 @@ from typing import Optional
 
 import streamlit as st
 
-# Cấu hình trang phải chạy trước các lệnh giao diện khác.
-# Các thư viện dưới đây được cài bởi Streamlit Cloud từ requirements.txt.
-# Không tự chạy pip install trong lúc ứng dụng đang hoạt động.
+st.set_page_config(
+    page_title="BẮP AI VIDEO - TikTok Shop Edition",
+    page_icon="🎬",
+    layout="centered",
+)
+
 try:
     import edge_tts
     import imageio_ffmpeg
@@ -20,472 +24,457 @@ try:
     from google.genai import types
     from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 except ModuleNotFoundError as error:
-    missing_module = error.name or "thư viện không xác định"
     st.error(
-        f"Thiếu thư viện: {missing_module}. "
-        "Hãy bảo đảm file requirements.txt nằm cùng thư mục với app.py "
-        "trên GitHub, sau đó khởi động lại ứng dụng Streamlit."
+        f"Thiếu thư viện: {error.name}. "
+        "Kiểm tra requirements.txt nằm cùng thư mục với app.py "
+        "trên GitHub rồi khởi động lại Streamlit."
     )
     st.stop()
 
-st.set_page_config(
-    page_title="BẮP AI VIDEO - TikTok Shop Edition",
-    page_icon="🎬",
-    layout="centered",
-)
 
-st.title("🎬 BẮP AI VIDEO - TẠO MP4")
-st.caption("Bản tạo video thật: ảnh sản phẩm + giọng đọc tiếng Việt + phụ đề + MP4 dọc 9:16.")
-st.success("Bộ dựng MP4 đã được tích hợp. Nhập mô tả, tải ảnh sản phẩm lên rồi nhấn nút tạo video.")
+st.title("🎬 BẮP AI VIDEO - TIKTOK SHOP")
+st.caption("Tạo video review sản phẩm dọc 9:16")
+st.success("Bộ dựng video MP4 đã được tích hợp.")
 
-# ---------------------------------------------------------
-# TIỆN ÍCH
-# ---------------------------------------------------------
+
 def run_async(coro):
-    """Chạy hàm async an toàn trong môi trường Streamlit đồng bộ."""
     try:
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
 
-    # Trường hợp hiếm khi đã có event loop đang chạy.
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, coro).result()
 
 
-async def generate_tts_mp3(text: str, voice: str, out_path: str):
+async def make_voice(text, voice, output):
     communicate = edge_tts.Communicate(text=text, voice=voice)
-    await communicate.save(out_path)
+    await communicate.save(output)
 
 
-def get_unicode_font(size: int, bold: bool = False):
-    candidates = []
+def get_font(size, bold=False):
+    fonts = []
     if bold:
-        candidates.extend([
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-            r"C:\Windows\Fonts\arialbd.ttf",
-        ])
-    candidates.extend([
+        fonts.append(
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        )
+    fonts.extend([
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        "/System/Library/Fonts/Supplemental/Arial.ttf",
     ])
 
-    for path in candidates:
+    for path in fonts:
         if os.path.exists(path):
             try:
-                return ImageFont.truetype(path, size=size)
+                return ImageFont.truetype(path, size)
             except Exception:
                 pass
+
     return ImageFont.load_default()
 
 
 def clean_scenes(data):
-    """Chuẩn hóa dữ liệu kịch bản trả về từ Gemini."""
     if isinstance(data, dict):
         data = data.get("scenes") or data.get("script") or []
 
     if not isinstance(data, list):
-        raise ValueError("Kịch bản AI không đúng định dạng danh sách.")
+        raise ValueError("Kịch bản AI không đúng định dạng.")
 
-    result = []
+    scenes = []
     for item in data:
         if not isinstance(item, dict):
             continue
+
         caption = str(item.get("caption", "")).strip()
         voiceover = str(item.get("voiceover", "")).strip()
+
         if voiceover:
-            result.append({
+            scenes.append({
                 "caption": caption or voiceover[:60],
-                "voiceover": voiceover,
+                "voiceover": voiceover
             })
 
-    if not result:
-        raise ValueError("AI chưa tạo được lời thoại. Vui lòng thử lại.")
-    return result
+    if not scenes:
+        raise ValueError("Không tạo được lời thoại.")
+
+    return scenes
 
 
-def generate_script_with_gemini(
-    api_key: str,
-    product_input: str,
-    product_note: str,
-    duration_str: str,
-    reviewer_style: str,
-):
-    seconds = int(duration_str.split()[0])
-    num_scenes = max(2, min(6, seconds // 5))
+def create_script(api_key, link, description, duration, style):
+    seconds = int(duration.split()[0])
+    count = max(2, min(6, seconds // 5))
 
     if not api_key.strip():
-        title = product_note.strip() or "sản phẩm tiện ích"
+        name = description.strip() or "sản phẩm này"
+
         templates = [
             {
                 "caption": "Khoan lướt qua nhé!",
-                "voiceover": f"Khoan lướt qua nha! Nếu bạn đang tìm một món đồ hữu ích thì xem thử {title} này nhé.",
+                "voiceover": f"Khoan lướt qua nha! Hôm nay mình giới thiệu {name}."
             },
             {
-                "caption": "Một lựa chọn đáng tham khảo",
-                "voiceover": "Thiết kế tiện dụng, phù hợp để bạn tham khảo cho nhu cầu sử dụng hằng ngày. Nhớ xem kỹ thông tin và hình ảnh sản phẩm trước khi chọn mua nhé.",
+                "caption": "Cùng xem sản phẩm",
+                "voiceover": "Mình cùng xem thiết kế và những điểm đáng chú ý của sản phẩm này nhé."
             },
             {
-                "caption": "Xem kỹ thông tin sản phẩm",
-                "voiceover": "Bạn có thể xem thêm hình ảnh, phân loại, kích thước và đánh giá của người mua ngay tại trang sản phẩm.",
+                "caption": "Tham khảo trước khi mua",
+                "voiceover": "Bạn nhớ xem kỹ hình ảnh, kích thước và thông tin sản phẩm trước khi chọn mua nha."
             },
             {
-                "caption": "Tham khảo tại giỏ hàng",
-                "voiceover": "Nếu thấy phù hợp, nhấn vào giỏ hàng để kiểm tra giá và ưu đãi đang hiển thị nha.",
+                "caption": "Xem tại giỏ hàng",
+                "voiceover": "Nếu thấy phù hợp, bạn có thể nhấn vào giỏ hàng để kiểm tra giá hiện tại nhé."
             },
             {
-                "caption": "Chọn đúng nhu cầu",
-                "voiceover": "Hãy chọn phân loại phù hợp với nhu cầu của mình và kiểm tra thông tin trước khi đặt hàng.",
+                "caption": "Chọn theo nhu cầu",
+                "voiceover": "Hãy chọn phân loại phù hợp với nhu cầu sử dụng của mình nha."
             },
             {
-                "caption": "Cảm ơn bạn đã xem",
-                "voiceover": "Cảm ơn bạn đã xem video. Theo dõi để xem thêm những sản phẩm hữu ích tiếp theo nhé.",
-            },
+                "caption": "Hẹn gặp lại",
+                "voiceover": "Cảm ơn bạn đã xem video. Hẹn gặp lại trong video tiếp theo nhé."
+            }
         ]
-        return templates[:num_scenes]
+
+        return templates[:count]
+
+    client = genai.Client(api_key=api_key.strip())
 
     prompt = f"""
-Bạn là người viết kịch bản video giới thiệu sản phẩm TikTok bằng tiếng Việt.
-Viết kịch bản video khoảng {seconds} giây, giọng tự nhiên, không phóng đại công dụng.
+Bạn là chuyên gia viết kịch bản TikTok Shop tiếng Việt.
 
-Thông tin đầu vào:
-- Link tham khảo: {product_input}
-- Mô tả do người dùng cung cấp: {product_note or "Chưa có mô tả"}
-- Phong cách: {reviewer_style}
+Thời lượng: {seconds} giây.
+Số cảnh: {count}.
+Link tham khảo: {link}
+Mô tả sản phẩm: {description or "Chưa có mô tả"}
+Phong cách: {style}
 
-Chia thành đúng {num_scenes} cảnh theo mạch: mở đầu thu hút -> giới thiệu -> lợi ích/điểm đáng chú ý
-(dựa trên mô tả được cung cấp, không tự bịa thông số) -> lời mời xem sản phẩm.
-Không khẳng định giảm giá, tồn kho, chất lượng hoặc công dụng nếu đầu vào không có dữ liệu.
+Viết tự nhiên, hấp dẫn, không tự bịa thông số,
+giá bán, công dụng hoặc khuyến mãi.
 
-Chỉ trả về JSON dạng danh sách. Mỗi phần tử có:
-{{"caption": "chữ ngắn trên màn hình", "voiceover": "lời thoại tiếng Việt"}}
+Trả về JSON dạng danh sách:
+[
+  {{"caption":"Tiêu đề ngắn","voiceover":"Lời thoại tiếng Việt"}}
+]
 """
-    client = genai.Client(api_key=api_key.strip())
+
     response = client.models.generate_content(
         model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            temperature=0.7,
-        ),
+            temperature=0.7
+        )
     )
 
     raw = (response.text or "").strip()
-    raw = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", raw, flags=re.IGNORECASE)
+    raw = re.sub(
+        r"^\s*```(?:json)?\s*|\s*```\s*$",
+        "",
+        raw,
+        flags=re.IGNORECASE
+    )
+
     return clean_scenes(json.loads(raw))
 
 
-def render_vertical_frame(
-    bg_image: Optional[Image.Image],
-    product_title: str,
-    caption_text: str,
-    reviewer_badge: str,
-    out_png_path: str,
-):
-    width, height = 1080, 1920
+def make_frame(image, caption, reviewer, output):
+    W, H = 1080, 1920
 
-    if bg_image is not None:
-        original = ImageOps.exif_transpose(bg_image).convert("RGB")
-        background = ImageOps.fit(
-            original, (width, height), method=Image.Resampling.LANCZOS
-        )
-        background = background.filter(ImageFilter.GaussianBlur(radius=25))
-        overlay = Image.new("RGBA", (width, height), (8, 12, 24, 125))
-        canvas = Image.alpha_composite(background.convert("RGBA"), overlay)
+    original = ImageOps.exif_transpose(image).convert("RGB")
 
-        foreground = original.copy()
-        foreground.thumbnail((940, 1120), Image.Resampling.LANCZOS)
-        fw, fh = foreground.size
-        canvas.paste(foreground, ((width - fw) // 2, (height - fh) // 2 - 50))
-    else:
-        canvas = Image.new("RGBA", (width, height), (18, 25, 43, 255))
+    background = ImageOps.fit(
+        original,
+        (W, H),
+        method=Image.Resampling.LANCZOS
+    )
+
+    background = background.filter(
+        ImageFilter.GaussianBlur(25)
+    )
+
+    overlay = Image.new(
+        "RGBA",
+        (W, H),
+        (8, 12, 24, 120)
+    )
+
+    canvas = Image.alpha_composite(
+        background.convert("RGBA"),
+        overlay
+    )
+
+    foreground = original.copy()
+    foreground.thumbnail((940, 1120))
+
+    x = (W - foreground.width) // 2
+    y = (H - foreground.height) // 2 - 50
+    canvas.paste(foreground, (x, y))
 
     draw = ImageDraw.Draw(canvas)
-    badge_font = get_unicode_font(30, bold=True)
-    title_font = get_unicode_font(42, bold=True)
-    caption_font = get_unicode_font(54, bold=True)
+
+    font_top = get_font(30, True)
+    font_caption = get_font(54, True)
 
     draw.rounded_rectangle(
-        [(55, 85), (width - 55, 175)],
+        (55, 85, W - 55, 175),
         radius=28,
-        fill=(10, 18, 32, 220),
+        fill=(10, 18, 32, 220)
     )
+
     draw.text(
-        (width // 2, 130),
-        f"BẮP AI VIDEO  •  {reviewer_badge}",
-        font=badge_font,
-        fill=(255, 255, 255, 255),
-        anchor="mm",
+        (W // 2, 130),
+        f"BẮP AI VIDEO • {reviewer}",
+        font=font_top,
+        fill="white",
+        anchor="mm"
     )
 
-    if product_title.strip():
-        title = textwrap.fill(product_title.strip()[:75], width=28)
-        draw.multiline_text(
-            (width // 2, 260),
-            title,
-            font=title_font,
-            fill=(255, 255, 255, 255),
-            anchor="mm",
-            align="center",
-            stroke_width=2,
-            stroke_fill=(0, 0, 0, 180),
-        )
+    caption = textwrap.fill(caption.strip(), width=23)
 
-    caption = textwrap.fill(caption_text.strip(), width=23)
-    bbox = draw.multiline_textbbox((0, 0), caption, font=caption_font, align="center")
-    text_width = bbox[2] - bbox[0]
-    text_height = bbox[3] - bbox[1]
-
-    center_y = 1510
-    left = max(45, (width - text_width) // 2 - 45)
-    right = min(width - 45, (width + text_width) // 2 + 45)
-    draw.rounded_rectangle(
-        [
-            (left, center_y - text_height // 2 - 35),
-            (right, center_y + text_height // 2 + 35),
-        ],
-        radius=30,
-        fill=(0, 0, 0, 205),
-    )
-    draw.multiline_text(
-        (width // 2, center_y),
+    bbox = draw.multiline_textbbox(
+        (0, 0),
         caption,
-        font=caption_font,
-        fill=(255, 255, 255, 255),
+        font=font_caption,
+        align="center"
+    )
+
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    cy = 1510
+
+    draw.rounded_rectangle(
+        (
+            max(40, (W - tw) // 2 - 45),
+            cy - th // 2 - 35,
+            min(W - 40, (W + tw) // 2 + 45),
+            cy + th // 2 + 35
+        ),
+        radius=30,
+        fill=(0, 0, 0, 205)
+    )
+
+    draw.multiline_text(
+        (W // 2, cy),
+        caption,
+        font=font_caption,
+        fill="white",
         anchor="mm",
         align="center",
-        spacing=12,
+        spacing=12
     )
 
-    canvas.convert("RGB").save(out_png_path, format="PNG")
+    canvas.convert("RGB").save(output, "PNG")
 
 
-def build_tiktok_video(scenes, voice_id, reviewer_badge, product_title, images):
-    ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+def build_video(scenes, voice, reviewer, images):
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        segment_paths = []
+    with tempfile.TemporaryDirectory() as folder:
+        segments = []
 
-        for index, scene in enumerate(scenes):
-            voice_text = scene.get("voiceover", "").strip()
-            caption_text = scene.get("caption", voice_text).strip()
-            if not voice_text:
-                continue
+        for i, scene in enumerate(scenes):
+            audio = os.path.join(folder, f"audio_{i}.mp3")
+            frame = os.path.join(folder, f"frame_{i}.png")
+            video = os.path.join(folder, f"segment_{i}.mp4")
 
-            audio_path = os.path.join(temp_dir, f"audio_{index}.mp3")
-            frame_path = os.path.join(temp_dir, f"frame_{index}.png")
-            segment_path = os.path.join(temp_dir, f"segment_{index}.mp4")
+            voice_text = scene["voiceover"].strip()
+            caption = scene["caption"].strip() or voice_text
 
-            run_async(generate_tts_mp3(voice_text, voice_id, audio_path))
+            run_async(make_voice(voice_text, voice, audio))
 
-            selected_image = images[index % len(images)] if images else None
-            render_vertical_frame(
-                selected_image,
-                product_title,
-                caption_text,
-                reviewer_badge,
-                frame_path,
+            image = images[i % len(images)]
+
+            make_frame(
+                image,
+                caption,
+                reviewer,
+                frame
             )
 
             command = [
-                ffmpeg_exe, "-y",
-                "-loop", "1", "-i", frame_path,
-                "-i", audio_path,
+                ffmpeg, "-y",
+                "-loop", "1",
+                "-i", frame,
+                "-i", audio,
                 "-c:v", "libx264",
-                "-tune", "stillimage",
                 "-preset", "veryfast",
+                "-tune", "stillimage",
                 "-pix_fmt", "yuv420p",
                 "-r", "30",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 "-shortest",
-                "-movflags", "+faststart",
-                segment_path,
+                video
             ]
 
-            completed = subprocess.run(
+            result = subprocess.run(
                 command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                capture_output=True,
+                text=True
             )
-            if completed.returncode != 0 or not os.path.exists(segment_path):
-                raise RuntimeError(
-                    "FFmpeg không dựng được một cảnh video: "
-                    + (completed.stderr[-1200:] if completed.stderr else "Không rõ nguyên nhân")
-                )
-            segment_paths.append(segment_path)
 
-        if not segment_paths:
-            raise ValueError("Không có cảnh video hợp lệ để ghép.")
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-1200:])
 
-        concat_file = os.path.join(temp_dir, "segments.txt")
-        with open(concat_file, "w", encoding="utf-8") as file:
-            for path in segment_paths:
-                safe_path = path.replace("\\", "/").replace("'", r"'\''")
-                file.write(f"file '{safe_path}'\n")
+            segments.append(video)
 
-        final_path = os.path.join(temp_dir, "bap_ai_tiktok_video.mp4")
-        completed = subprocess.run(
+        concat_file = os.path.join(folder, "segments.txt")
+
+        with open(concat_file, "w", encoding="utf-8") as f:
+            for path in segments:
+                f.write(f"file '{path}'\n")
+
+        final_file = os.path.join(folder, "BAP_AI_VIDEO.mp4")
+
+        result = subprocess.run(
             [
-                ffmpeg_exe, "-y",
+                ffmpeg, "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", concat_file,
-                "-c", "copy",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                "-b:a", "192k",
                 "-movflags", "+faststart",
-                final_path,
+                final_file
             ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            capture_output=True,
+            text=True
         )
 
-        if completed.returncode != 0 or not os.path.exists(final_path):
-            raise RuntimeError(
-                "FFmpeg không ghép được các cảnh: "
-                + (completed.stderr[-1500:] if completed.stderr else "Không rõ nguyên nhân")
-            )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr[-1500:])
 
-        with open(final_path, "rb") as file:
-            video_bytes = file.read()
-
-        if not video_bytes:
-            raise RuntimeError("Video xuất ra bị rỗng.")
-        return video_bytes
+        with open(final_file, "rb") as f:
+            return f.read()
 
 
-# ---------------------------------------------------------
-# GIAO DIỆN
-# ---------------------------------------------------------
-product_links = st.text_area(
-    "Link sản phẩm TikTok Shop (để lưu/tham khảo)",
-    placeholder="Dán link sản phẩm tại đây...",
-    height=85,
+# ---------------- GIAO DIỆN ----------------
+
+product_link = st.text_area(
+    "🔗 Link sản phẩm TikTok Shop",
+    placeholder="Dán link sản phẩm tại đây..."
 )
 
-product_note = st.text_area(
-    "Mô tả sản phẩm (nên nhập để lời thoại chính xác)",
-    placeholder="Ví dụ: tên sản phẩm, chất liệu, kích thước, màu sắc, công dụng...",
-    height=100,
+description = st.text_area(
+    "📝 Mô tả sản phẩm",
+    placeholder="Tên, màu sắc, kích thước, chất liệu, công dụng..."
 )
 
-duration_str = st.selectbox(
-    "Thời lượng video",
+duration = st.selectbox(
+    "⏱ Thời lượng video",
     ["10 giây", "20 giây", "30 giây", "40 giây"],
-    index=1,
+    index=1
 )
 
 reviewer = st.radio(
-    "Chọn người review",
-    ["Nữ Reviewer (Hoài My)", "Nam Reviewer (Nam Minh)"],
-    horizontal=True,
+    "🎤 Người review",
+    ["Nữ Reviewer - Hoài My", "Nam Reviewer - Nam Minh"],
+    horizontal=True
 )
 
 if reviewer.startswith("Nữ"):
-    voice_choice = "vi-VN-HoaiMyNeural"
-    reviewer_badge = "NỮ REVIEWER"
-    reviewer_style = "Nữ reviewer thân thiện, tự nhiên, năng động"
+    voice = "vi-VN-HoaiMyNeural"
+    reviewer_name = "HOÀI MY"
+    style = "Nữ reviewer thân thiện, tự nhiên"
 else:
-    voice_choice = "vi-VN-NamMinhNeural"
-    reviewer_badge = "NAM REVIEWER"
-    reviewer_style = "Nam reviewer gần gũi, rõ ràng, năng động"
+    voice = "vi-VN-NamMinhNeural"
+    reviewer_name = "NAM MINH"
+    style = "Nam reviewer gần gũi, rõ ràng"
 
 uploaded_files = st.file_uploader(
-    "Tải ảnh sản phẩm lên",
+    "🖼 Tải ảnh sản phẩm",
     type=["jpg", "jpeg", "png", "webp"],
-    accept_multiple_files=True,
+    accept_multiple_files=True
 )
 
 if uploaded_files:
     st.caption(f"Đã chọn {len(uploaded_files)} ảnh.")
-    preview_columns = st.columns(min(3, len(uploaded_files)))
-    for index, uploaded in enumerate(uploaded_files):
-        try:
-            preview = Image.open(uploaded)
-            with preview_columns[index % len(preview_columns)]:
-                st.image(preview, caption=uploaded.name, use_column_width=True)
-        except Exception:
-            st.warning(f"Không đọc được ảnh: {uploaded.name}")
+    cols = st.columns(min(3, len(uploaded_files)))
 
-gemini_key = st.text_input(
+    for i, file in enumerate(uploaded_files):
+        file.seek(0)
+        with cols[i % len(cols)]:
+            st.image(
+                file,
+                caption=file.name,
+                use_container_width=True
+            )
+
+api_key = st.text_input(
     "Gemini API Key (không bắt buộc)",
     type="password",
-    placeholder="Để trống để dùng kịch bản mẫu",
+    placeholder="Để trống dùng kịch bản mẫu"
 )
 
 st.info(
-    "Lưu ý: Link TikTok Shop hiện được dùng làm thông tin tham khảo cho kịch bản. "
-    "Ứng dụng chưa tự trích xuất được tên, giá và ảnh từ trang sản phẩm. "
-    "Hãy tải ảnh và nhập mô tả sản phẩm để video bám sát hàng thật."
+    "Ứng dụng hiện dựng video từ ảnh bạn tải lên. "
+    "Link TikTok Shop chưa tự trích xuất ảnh và thông tin sản phẩm."
 )
 
 if st.button(
-    "🎬 TẠO VIDEO MP4 NGAY",
+    "🚀 BẮT ĐẦU TẠO VIDEO MP4",
     type="primary",
-    use_container_width=True,
+    use_container_width=True
 ):
-    if not product_links.strip():
-        st.warning("Vui lòng nhập link sản phẩm trước khi tạo video.")
+    if not product_link.strip():
+        st.warning("Vui lòng nhập link sản phẩm.")
+    elif not uploaded_files:
+        st.warning("Vui lòng tải ít nhất một ảnh sản phẩm.")
     else:
         try:
-            with st.status("🎬 Đang tạo video...", expanded=True) as status:
-                st.write("1️⃣ Đang tạo kịch bản...")
-                scenes = generate_script_with_gemini(
-                    gemini_key,
-                    product_links.strip(),
-                    product_note.strip(),
-                    duration_str,
-                    reviewer_style,
-                )
-                st.write(f"Đã tạo {len(scenes)} cảnh.")
+            with st.status("Đang tạo video...", expanded=True) as status:
+                st.write("1. Đang tạo kịch bản...")
 
-                st.write("2️⃣ Đang chuẩn bị ảnh sản phẩm...")
-                pil_images = []
-                for uploaded in uploaded_files or []:
-                    uploaded.seek(0)
-                    with Image.open(uploaded) as image_file:
-                        pil_images.append(
-                            ImageOps.exif_transpose(image_file).convert("RGB").copy()
+                scenes = create_script(
+                    api_key,
+                    product_link,
+                    description,
+                    duration,
+                    style
+                )
+
+                st.write("2. Đang xử lý ảnh...")
+                images = []
+
+                for file in uploaded_files:
+                    file.seek(0)
+                    with Image.open(file) as im:
+                        images.append(
+                            ImageOps.exif_transpose(im).convert("RGB").copy()
                         )
 
-                st.write("3️⃣ Đang tạo giọng đọc và dựng video 9:16...")
-                video_bytes = build_tiktok_video(
+                st.write("3. Đang tạo giọng đọc và dựng MP4...")
+
+                video_bytes = build_video(
                     scenes,
-                    voice_choice,
-                    reviewer_badge,
-                    product_note.strip() or "Sản phẩm TikTok Shop",
-                    pil_images,
+                    voice,
+                    reviewer_name,
+                    images
                 )
 
                 status.update(
-                    label="🎉 Tạo video thành công!",
+                    label="Đã tạo video thành công!",
                     state="complete",
-                    expanded=False,
+                    expanded=False
                 )
 
-            st.success("Video đã sẵn sàng!")
+            st.success("🎉 Video đã sẵn sàng!")
             st.video(video_bytes)
+
             st.download_button(
-                "📥 TẢI VIDEO VỀ MÁY",
+                "📥 TẢI VIDEO MP4",
                 data=video_bytes,
-                file_name="bap_ai_tiktok_video.mp4",
+                file_name="BAP_AI_VIDEO.mp4",
                 mime="video/mp4",
-                use_container_width=True,
+                use_container_width=True
             )
 
-            with st.expander("Xem kịch bản đã tạo"):
-                for index, scene in enumerate(scenes, start=1):
-                    st.markdown(f"**Cảnh {index}: {scene['caption']}**")
+            with st.expander("Xem kịch bản"):
+                for i, scene in enumerate(scenes, 1):
+                    st.markdown(f"**Cảnh {i}: {scene['caption']}**")
                     st.write(scene["voiceover"])
 
         except Exception as error:
             st.error(f"Không tạo được video: {error}")
-            st.info(
-                "Ứng dụng đã có bộ dựng MP4. Nếu lỗi Edge-TTS, kiểm tra Streamlit Cloud "
-                "có cài edge-tts và máy chủ có thể kết nối dịch vụ giọng đọc. "
-                "Nếu lỗi Gemini, hãy để trống API Key để dùng kịch bản mẫu."
-            )
