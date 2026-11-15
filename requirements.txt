@@ -1,6 +1,8 @@
 
-
 streamlit
+python-dotenv
+supabase
+fal-client
 edge-tts
 imageio-ffmpeg
 google-genai
