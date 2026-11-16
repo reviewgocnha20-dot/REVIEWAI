@@ -1,316 +1,190 @@
-/**
- * ============================================================================
- * TỔNG HỢP MÃ NGUỒN DỰ ÁN: AI REVIEW VIDEO SYSTEM (Next.js + Supabase + Worker)
- * ============================================================================
- * File này chứa toàn bộ cấu trúc:
- * 1. Database Migration & RLS (SQL)
- * 2. Biến môi trường & Kiểm tra readiness (25.9)
- * 3. AI Director Script Generator (25.4, 25.5)
- * 4. FFmpeg & QC Gate Validator (25.7)
- * 5. Dedicated Async Worker (Xử lý hàng đợi 10 công đoạn)
- * 6. API Routes (Tạo video, Retry, Clone, v.v.)
- * 7. Giao diện Frontend: Trang Đang Xử Lý & Thư Viện Hoàn Thành (25.1, 25.2, 25.3)
- * ============================================================================
- */
+import streamlit as st
+from supabase import create_client
 
-/* ============================================================================
- * PHẦN 1: DATABASE MIGRATION & RLS (Supabase SQL)
- * ============================================================================
-/*
--- 1. Bật extension và tạo enum trạng thái
-create extension if not exists "pgcrypto";
+# ==========================================
+# 1. CẤU HÌNH GIAO DIỆN & KẾT NỐI SUPABASE
+# ==========================================
+st.set_page_config(
+    page_title="AI Review Video System",
+    page_icon="🎬",
+    layout="wide"
+)
 
-create type public.video_job_status as enum (
-  'queued', 'analyzing_product', 'writing_script', 'generating_voice', 
-  'generating_character', 'generating_scenes', 'syncing_lips', 
-  'merging_video', 'quality_checking', 'saving_video', 'completed', 'needs_review', 'failed'
-);
+# Lấy thông tin kết nối từ Streamlit Secrets hoặc dùng giá trị mặc định
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "https://your-project.supabase.co")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "your-supabase-anon-key")
 
--- 2. Bảng ví credits của user
-create table public.user_credits (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  balance numeric(12,2) not null default 100.00 check (balance >= 0),
-  reserved numeric(12,2) not null default 0.00 check (reserved >= 0),
-  updated_at timestamptz not null default now()
-);
+@st.cache_resource
+def init_supabase():
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
--- 3. Bảng video_projects
-create table public.video_projects (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  parent_project_id uuid references public.video_projects(id) on delete set null,
-  project_name text not null,
-  product_url text,
-  product_name text not null,
-  product_image_url text not null,
-  product_category text,
-  verified_product_facts jsonb not null default '{}'::jsonb,
-  target_duration_sec int not null check (target_duration_sec in (15, 30, 45, 60)),
-  aspect_ratio text not null default '9:16' check (aspect_ratio in ('9:16', '16:9', '1:1')),
-  review_style text not null,
-  character_config jsonb not null,
-  voice_config jsonb not null,
-  script_json jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
+supabase = init_supabase()
 
--- 4. Bảng video_jobs
-create table public.video_jobs (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  project_id uuid not null references public.video_projects(id) on delete cascade,
-  idempotency_key text not null,
-  status public.video_job_status not null default 'queued',
-  current_stage_label text not null default 'Đang trong hàng đợi',
-  provider_progress_percent int check (provider_progress_percent between 0 and 100),
-  scenes_completed int not null default 0,
-  scenes_total int not null default 0,
-  estimated_credits numeric(10,2) not null default 0,
-  used_credits numeric(10,2) not null default 0,
-  stage_costs_usd jsonb not null default '{}'::jsonb,
-  failed_stage text,
-  error_code text,
-  error_message text,
-  retry_count int not null default 0,
-  max_retries int not null default 3,
-  locked_by_worker text,
-  locked_at timestamptz,
-  timeout_at timestamptz,
-  started_at timestamptz not null default now(),
-  completed_at timestamptz,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique(user_id, idempotency_key)
-);
+# ==========================================
+# 2. THANH ĐIỀU HƯỚNG (SIDEBAR)
+# ==========================================
+st.sidebar.title("🎬 AI Review Video")
+menu = st.sidebar.radio("Chọn chức năng:", ["🚀 Tạo Video Mới", "⏳ Video Đang Xử Lý", "📁 Thư Viện Hoàn Thành"])
 
--- 5. Bảng video_scenes
-create table public.video_scenes (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  job_id uuid not null references public.video_jobs(id) on delete cascade,
-  scene_index int not null,
-  duration_sec numeric(5,2) not null,
-  dialogue_text text not null,
-  action_direction text not null,
-  camera_framing text not null,
-  needs_lipsync boolean not null default false,
-  status text not null default 'pending',
-  qc_report jsonb not null default '{}'::jsonb,
-  error_message text,
-  created_at timestamptz not null default now(),
-  unique(job_id, scene_index)
-);
+# ==========================================
+# 3. GIAO DIỆN: TẠO VIDEO MỚI
+# ==========================================
+if menu == "🚀 Tạo Video Mới":
+    st.markdown("<h1>🚀 Tạo Video Review Sản Phẩm AI</h1>", unsafe_allow_html=True)
+    
+    with st.form("create_video_form"):
+        project_name = st.text_input("Tên dự án", "Review sản phẩm tự động")
+        product_name = st.text_input("Tên sản phẩm", "Máy xay sinh tố mini")
+        product_url = st.text_input("Link sản phẩm (Tùy chọn)", "https://...")
+        product_image_url = st.text_input("Link ảnh sản phẩm", "https://via.placeholder.com/300")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            target_duration = st.selectbox("Thời lượng video (giây)", [15, 30, 45, 60], index=1)
+            aspect_ratio = st.selectbox("Tỷ lệ khung hình", ["9:16", "16:9", "1:1"])
+        with col2:
+            review_style = st.selectbox("Phong cách review", ["home_kitchen", "living_room", "vlog", "handheld_closeup"])
+            category = st.text_input("Danh mục sản phẩm", "kitchen_appliance")
 
--- 6. Bảng generation_history (Thư viện hoàn thành)
-create table public.generation_history (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  project_id uuid not null references public.video_projects(id) on delete cascade,
-  job_id uuid not null unique references public.video_jobs(id) on delete cascade,
-  product_name text not null,
-  project_name text not null,
-  thumbnail_storage_path text not null,
-  video_storage_path text not null,
-  duration_sec numeric(6,2) not null,
-  aspect_ratio text not null,
-  character_name text not null,
-  voice_name text not null,
-  script_snapshot jsonb not null,
-  qc_summary jsonb not null,
-  is_deleted boolean not null default false,
-  created_at timestamptz not null default now()
-);
+        submitted = st.form_submit_button("Tạo Video Ngay")
+        
+        if submitted:
+            if not product_name or not product_image_url:
+                st.warning("Vui lòng điền đầy đủ tên sản phẩm và link ảnh.")
+            else:
+                try:
+                    dummy_user_id = "00000000-0000-0000-0000-000000000000"
+                    
+                    # 1. Tạo project
+                    proj_res = supabase.table("video_projects").insert({
+                        "user_id": dummy_user_id,
+                        "project_name": project_name,
+                        "product_name": product_name,
+                        "product_url": product_url,
+                        "product_image_url": product_image_url,
+                        "product_category": category,
+                        "target_duration_sec": target_duration,
+                        "aspect_ratio": aspect_ratio,
+                        "review_style": review_style,
+                        "character_config": {"name": "Default Model"},
+                        "voice_config": {"name": "Default Voice"}
+                    }).execute()
+                    
+                    if proj_res.data:
+                        project_id = proj_res.data[0]["id"]
+                        
+                        # 2. Tạo job trong hàng đợi
+                        supabase.table("video_jobs").insert({
+                            "user_id": dummy_user_id,
+                            "project_id": project_id,
+                            "idempotency_key": f"job-{SUPABASE_URL}",
+                            "status": "queued",
+                            "current_stage_label": "Đang trong hàng đợi",
+                            "estimated_credits": target_duration * 0.5
+                        }).execute()
+                        
+                        st.success("🎉 Đã đưa tác vụ vào hàng đợi thành công! Hãy chuyển sang mục 'Video Đang Xử Lý' để theo dõi.")
+                    else:
+                        st.error("Không thể tạo dự án.")
+                except Exception as e:
+                    st.error(f"Lỗi khi gửi yêu cầu: {e}")
 
--- Bật RLS và Realtime
-alter table public.video_projects enable row level security;
-alter table public.video_jobs enable row level security;
-alter table public.video_scenes enable row level security;
-alter table public.generation_history enable row level security;
-alter publication supabase_realtime add table public.video_jobs, public.video_scenes;
-*/
+# ==========================================
+# 4. GIAO DIỆN: VIDEO ĐANG XỬ LÝ (REALTIME)
+# ==========================================
+elif menu == "⏳ Video Đang Xử Lý":
+    st.markdown("<h1>⏳ Video Đang Xử Lý & Hàng Đợi</h1>", unsafe_allow_html=True)
+    
+    if st.button("🔄 Làm mới danh sách"):
+        st.rerun()
 
-// ============================================================================
-// PHẦN 2: THƯ VIỆN BACKEND & KIỂM TRA DỊCH VỤ THẬT (25.9)
-// ============================================================================
+    try:
+        response = supabase.table("video_jobs").select("*, video_projects(*)").order("created_at", desc=True).execute()
+        jobs = response.data or []
 
-export interface MissingService {
-  service: string;
-  env_var: string;
-  message: string;
-  setup_guide: string;
-}
+        if not jobs:
+            st.info("Hiện không có video nào trong hàng đợi xử lý.")
+        else:
+            for job in jobs:
+                proj = job.get("video_projects") or {}
+                product_name = proj.get("product_name", "Dự án AI")
+                status = job.get("status", "queued")
+                stage_label = job.get("current_stage_label", "Đang trong hàng đợi")
+                progress = job.get("provider_progress_percent")
 
-export function checkProviderReadiness(): { ready: boolean; missing_services: MissingService[] } {
-  const missing: MissingService[] = [];
+                with st.container():
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.subheader(product_name)
+                        st.caption(f"Trạng thái hệ thống: `{status}`")
+                    with col2:
+                        st.markdown(f"**{stage_label}**")
 
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    missing.push({
-      service: 'SUPABASE_BACKEND',
-      env_var: 'SUPABASE_SERVICE_ROLE_KEY',
-      message: 'Thiếu cấu hình kết nối quản trị Supabase.',
-      setup_guide: 'Cấu hình SUPABASE_SERVICE_ROLE_KEY trong biến môi trường.'
-    });
-  }
-  if (!process.env.OPENAI_API_KEY) {
-    missing.push({
-      service: 'LLM_AI_DIRECTOR',
-      env_var: 'OPENAI_API_KEY',
-      message: 'Chưa kết nối API Đạo diễn LLM thực tế.',
-      setup_guide: 'Cấu hình OPENAI_API_KEY trong biến môi trường.'
-    });
-  }
-  if (!process.env.FAL_KEY) {
-    missing.push({
-      service: 'VIDEO_GENERATION_API',
-      env_var: 'FAL_KEY',
-      message: 'Chưa kết nối API tạo video thực tế (fal.ai).',
-      setup_guide: 'Cấu hình FAL_KEY trong biến môi trường.'
-    });
-  }
+                    if progress is not None:
+                        st.progress(progress / 100)
+                    
+                    if status == "failed":
+                        st.error(f"Lỗi: {job.get('error_message', 'Lỗi không xác định')}")
+                    
+                    st.divider()
+    except Exception as e:
+        st.error(f"Lỗi kết nối cơ sở dữ liệu: {e}")
 
-  return { ready: missing.length === 0, missing_services: missing };
-}
+# ==========================================
+# 5. GIAO DIỆN: THƯ VIỆN HOÀN THÀNH & 8 NÚT BẮT BUỘC
+# ==========================================
+elif menu == "📁 Thư Viện Hoàn Thành":
+    st.markdown("<h1>📁 Thư Viện Video Đã Hoàn Thành</h1>", unsafe_allow_html=True)
+    
+    search_query = st.text_input("🔍 Tìm kiếm theo tên sản phẩm...", "")
 
+    try:
+        query = supabase.table("generation_history").select("*").eq("is_deleted", False).order("created_at", desc=True)
+        response = query.execute()
+        history_list = response.data or []
 
-// ============================================================================
-// PHẦN 3: WORKER XỬ LÝ HÀNG ĐỢI BẤT ĐỒNG BỘ (10 CÔNG ĐOẠN THỰC TẾ)
-// ============================================================================
+        # Lọc theo từ khóa tìm kiếm
+        if search_query:
+            history_list = [h for h in history_list if search_query.lower() in h.get("product_name", "").lower()]
 
-/*
-  Ví dụ logic vòng lặp Worker chạy ngầm (thường đặt tại src/worker/index.ts):
-  
-  import { createClient } from '@supabase/supabase-js';
-  const supabaseAdmin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
+        if not history_list:
+            st.info("Chưa có video nào hoàn thành hoặc không tìm thấy kết quả phù hợp.")
+        else:
+            for item in history_list:
+                with st.container():
+                    st.markdown(f"### 🎬 {item.get('product_name')}")
+                    st.text(f"Dự án: {item.get('project_name')} | Thời lượng: {item.get('duration_sec')}s")
+                    
+                    # Mô phỏng Bộ 8 nút chức năng bắt buộc
+                    b1, b2, b3, b4 = st.columns(4)
+                    with b1:
+                        if st.button("👁️ Xem", key=f"view_{item['id']}"):
+                            st.info("Mở trình phát video trực tiếp.")
+                    with b2:
+                        if st.button("⬇️ Tải", key=f"dl_{item['id']}"):
+                            st.success("Đang chuẩn bị file MP4 để tải xuống.")
+                    with b3:
+                        if st.button("📜 Script", key=f"script_{item['id']}"):
+                            st.json(item.get("script_snapshot", {}))
+                    with b4:
+                        if st.button("ℹ️ Info", key=f"info_{item['id']}"):
+                            st.write(item.get("qc_summary", {}))
 
-  async function runWorkerLoop() {
-    while (true) {
-      const { data: jobs } = await supabaseAdmin
-        .from('video_jobs')
-        .select('*')
-        .eq('status', 'queued')
-        .limit(1);
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        if st.button("🔄 Tạo lại", key=f"re_{item['id']}"):
+                            st.toast("Đã nhân bản cấu hình để tạo video mới!")
+                    with c2:
+                        if st.button("🛠️ Sửa cảnh", key=f"scene_{item['id']}"):
+                            st.toast("Mở chế độ tái tạo lại một cảnh lỗi.")
+                    with c3:
+                        if st.button("📋 Sao chép", key=f"clone_{item['id']}"):
+                            st.toast("Đã sao chép dự án nháp mới!")
+                    with c4:
+                        if st.button("🗑️ Xóa", key=f"del_{item['id']}"):
+                            supabase.table("generation_history").update({"is_deleted": True}).eq("id", item["id"]).execute()
+                            st.rerun()
 
-      if (!jobs || jobs.length === 0) {
-        await new Promise(r => setTimeout(r, 3000));
-        continue;
-      }
-
-      const job = jobs[0];
-      // Cập nhật trạng thái lần lượt qua 10 công đoạn:
-      // analyzing_product -> writing_script -> generating_voice -> generating_character 
-      // -> generating_scenes -> syncing_lips -> merging_video -> quality_checking -> saving_video -> completed
-    }
-  }
-*/
-
-
-// ============================================================================
-// PHẦN 4: GIAO DIỆN FRONTEND (REACT COMPONENTS & PAGES)
-// ============================================================================
-
-/**
- * 1. Trang Video Đang Xử Lý (src/app/processing/page.tsx)
- * - Lắng nghe Supabase Realtime để cập nhật trạng thái thời gian thực không cần F5.
- */
-export function ProcessingPageCodePreview() {
-  return `
-    'use client';
-    import { useEffect, useState } from 'react';
-    import { createClient } from '@supabase/supabase-js';
-
-    const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-
-    export default function ProcessingPage() {
-      const [jobs, setJobs] = useState<any[]>([]);
-
-      useEffect(() => {
-        async function fetchJobs() {
-          const { data } = await supabase.from('video_jobs').select('*, video_projects(*)').order('created_at', { ascending: false });
-          if (data) setJobs(data);
-        }
-        fetchJobs();
-
-        const channel = supabase.channel('jobs-realtime')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'video_jobs' }, fetchJobs)
-          .subscribe();
-
-        return () => { supabase.removeChannel(channel); };
-      }, []);
-
-      return (
-        <div className="p-8 max-w-6xl mx-auto">
-          <h1 className="text-3xl font-bold mb-6">🎬 Video Đang Xử Lý (Realtime)</h1>
-          <div className="grid gap-4">
-            {jobs.map((job) => (
-              <div key={job.id} className="p-5 border rounded-xl bg-white shadow-sm flex flex-col gap-2">
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold text-lg">{job.video_projects?.product_name}</span>
-                  <span className="px-3 py-1 rounded-full text-xs font-bold uppercase bg-blue-100 text-blue-700">
-                    {job.current_stage_label}
-                  </span>
-                </div>
-                {job.provider_progress_percent !== null && (
-                  <div className="w-full bg-gray-200 rounded-full h-2.5">
-                    <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: \`\${job.provider_progress_percent}%\` }}></div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-  `;
-}
-
-/**
- * 2. Trang Video Đã Hoàn Thành & Bộ 8 Nút Bắt Buộc (src/app/history/page.tsx)
- */
-export function HistoryPageCodePreview() {
-  return `
-    'use client';
-    import { useEffect, useState } from 'react';
-    import { createClient } from '@supabase/supabase-js';
-
-    const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-
-    export default function HistoryPage() {
-      const [history, setHistory] = useState<any[]>([]);
-
-      useEffect(() => {
-        async function load() {
-          const { data } = await supabase.from('generation_history').select('*').eq('is_deleted', false).order('created_at', { ascending: false });
-          if (data) setHistory(data);
-        }
-        load();
-      }, []);
-
-      return (
-        <div className="p-8 max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-6">📁 Thư Viện Video Đã Hoàn Thành</h1>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {history.map((item) => (
-              <div key={item.id} className="border rounded-xl p-4 bg-white shadow-sm flex flex-col gap-3">
-                <h3 className="font-bold text-lg">{item.product_name}</h3>
-                <p className="text-xs text-gray-500">Thời lượng: {item.duration_sec}s | {item.aspect_ratio}</p>
-                
-                {/* Bộ 8 nút bắt buộc */}
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <button className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium" onClick={() => alert('1. Xem video')}>1. Xem video</button>
-                  <button className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium" onClick={() => alert('2. Tải MP4')}>2. Tải MP4</button>
-                  <button className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium" onClick={() => alert('3. Kịch bản')}>3. Kịch bản</button>
-                  <button className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium" onClick={() => alert('4. Info dự án')}>4. Info dự án</button>
-                  <button className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-xs font-medium" onClick={() => alert('5. Tạo lại video')}>5. Tạo lại video</button>
-                  <button className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded text-xs font-medium" onClick={() => alert('6. Sửa 1 cảnh')}>6. Sửa 1 cảnh</button>
-                  <button className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded text-xs font-medium" onClick={() => alert('7. Xóa video')}>7. Xóa</button>
-                  <button className="px-2 py-1 bg-gray-100 hover:bg-gray-200 rounded text-xs font-medium" onClick={() => alert('8. Sao chép dự án')}>8. Sao chép</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-  `;
-}
+                    st.divider()
+    except Exception as e:
+        st.error(f"Lỗi khi tải thư viện: {e}")
